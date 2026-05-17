@@ -15,12 +15,13 @@ host = "127.0.0.1"
 port = 7777
 
 [whisper]
-# Use "large-v3" for best quality (downloaded on first run, ~3 GB).
-# Use "small" or "base" for faster local testing.
-model        = "large-v3"
-# "cuda" requires NVIDIA + CUDA; falls back to int8 + CPU automatically on OOM.
-device       = "cuda"
-compute_type = "float16"
+# No CUDA detected on this machine → CPU + int8 + medium model is the sane default.
+# - "medium" (~770 MB, downloaded once on first use): high accuracy, ~1x real-time on CPU.
+# - Swap to "large-v3" for highest quality (~3 GB, ~3-5x slower on CPU).
+# - Swap to "small" (~470 MB) for faster turnaround at slightly lower quality.
+model        = "medium"
+device       = "cpu"
+compute_type = "int8"
 vad_filter   = true
 beam_size    = 5
 language     = "auto"
