@@ -2,7 +2,7 @@
 
 ## First-time setup
 
-1. **Clone or open the repo** at `C:\Users\oasrvadmin\Documents\YouTube-Clipper`.
+1. **Clone or open the repo** at `<repo>`.
 2. **Install everything**:
    ```powershell
    scripts\install.ps1
@@ -25,7 +25,7 @@
    - `chrome://extensions/`
    - Toggle **Developer mode** (top right)
    - **Load unpacked**
-   - Select `C:\Users\oasrvadmin\Documents\YouTube-Clipper\apps\extension\dist`
+   - Select `<repo>\apps\extension\dist`
 
 ## Daily use
 

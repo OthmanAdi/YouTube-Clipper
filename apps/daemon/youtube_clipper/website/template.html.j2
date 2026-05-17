@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{{ title }} — {{ start_mmss }}-{{ end_mmss }}</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d0d10;
+  --panel: #15151a;
+  --panel-2: #1c1c23;
+  --line: #2a2a32;
+  --ink: #ececec;
+  --ink-2: #b4b4be;
+  --ink-3: #6f6f7a;
+  --accent: #ff1864;
+  --accent-soft: rgba(255,24,100,0.16);
+  --ok: #44d17a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+body {
+  font: 16px/1.65 ui-serif, "Charter", "Iowan Old Style", "Source Serif Pro", Georgia, serif;
+  letter-spacing: 0.005em;
+}
+.wrap { max-width: 720px; margin: 0 auto; padding: 48px 24px 96px; }
+.kicker {
+  text-transform: uppercase; letter-spacing: 0.18em; font-size: 11px;
+  color: var(--ink-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-bottom: 12px;
+}
+h1 {
+  font-size: 38px; line-height: 1.15; margin: 0 0 14px; font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.meta {
+  display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
+  color: var(--ink-2); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 14px;
+  border-bottom: 1px solid var(--line); padding-bottom: 18px; margin-bottom: 24px;
+}
+.meta a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--ink-3); }
+.meta a:hover { border-bottom-color: var(--accent); }
+.meta .dot { color: var(--ink-3); }
+.meta .range {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent);
+}
+
+.player {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; margin: 0 0 28px;
+}
+.player audio { width: 100%; }
+
+section { margin: 36px 0; }
+h2 {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.16em;
+  color: var(--ink-3); margin: 0 0 12px; font-weight: 600;
+}
+.tldr { font-size: 19px; line-height: 1.55; }
+
+ul.bullets { padding-left: 0; list-style: none; margin: 0; }
+ul.bullets li {
+  position: relative; padding: 8px 0 8px 22px; border-bottom: 1px dashed var(--line);
+  font-family: ui-sans-serif, system-ui, sans-serif; font-size: 15.5px; line-height: 1.55;
+}
+ul.bullets li:last-child { border-bottom: none; }
+ul.bullets li::before {
+  content: ""; position: absolute; left: 0; top: 18px;
+  width: 8px; height: 8px; background: var(--accent); border-radius: 50%;
+}
+
+.pullquotes { display: grid; gap: 18px; }
+.pullquote {
+  font-size: 22px; line-height: 1.4; color: var(--ink);
+  border-left: 3px solid var(--accent); padding: 4px 0 4px 18px;
+  font-style: italic;
+}
+
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; padding: 4px 8px; border-radius: 999px;
+  background: var(--panel-2); color: var(--ink-2); border: 1px solid var(--line);
+}
+
+.transcript { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 14.5px; }
+.transcript .seg {
+  display: grid; grid-template-columns: 64px 1fr; gap: 12px;
+  padding: 6px 0; border-bottom: 1px solid var(--line);
+}
+.transcript .seg:last-child { border-bottom: none; }
+.transcript .seg.active { background: var(--accent-soft); border-radius: 4px; padding-left: 8px; }
+.transcript .ts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px; color: var(--ink-3); cursor: pointer;
+  user-select: none; padding-top: 2px;
+}
+.transcript .ts:hover { color: var(--accent); }
+.transcript .text { color: var(--ink); }
+
+footer {
+  margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--ink-3);
+}
+footer .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline; }
+footer .k { color: var(--ink-2); }
+footer a { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--line); }
+footer a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+@media (max-width: 540px) {
+  .wrap { padding: 28px 16px 64px; }
+  h1 { font-size: 28px; }
+  .tldr { font-size: 17px; }
+  .pullquote { font-size: 19px; }
+  .transcript .seg { grid-template-columns: 56px 1fr; gap: 8px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">YouTube Clipper · {{ created_iso }}</div>
+  <h1>{{ title }}</h1>
+  <div class="meta">
+    {% if channel and channel_url %}<a href="{{ channel_url }}">{{ channel }}</a>{% elif channel %}<span>{{ channel }}</span>{% endif %}
+    <span class="dot">·</span>
+    <span class="range">{{ start_mmss }} → {{ end_mmss }}</span>
+    <span class="dot">·</span>
+    <span>{{ length_label }}</span>
+    <span class="dot">·</span>
+    <a href="{{ url_with_t }}">Watch on YouTube</a>
+  </div>
+
+  <div class="player">
+    <audio id="audio" controls preload="metadata" src="audio.mp3"></audio>
+  </div>
+
+  <section>
+    <h2>TL;DR</h2>
+    <p class="tldr">{{ tldr }}</p>
+  </section>
+
+  <section>
+    <h2>Key Points</h2>
+    <ul class="bullets">
+      {% for b in bullets %}<li>{{ b }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  {% if notable_quotes %}
+  <section>
+    <h2>Notable Quotes</h2>
+    <div class="pullquotes">
+      {% for q in notable_quotes %}<blockquote class="pullquote">{{ q }}</blockquote>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if tags %}
+  <section>
+    <h2>Tags</h2>
+    <div class="tags">
+      {% for t in tags %}<span class="tag">{{ t }}</span>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>Transcript · click any timestamp to jump in the audio</h2>
+    <div class="transcript" id="transcript">
+      {% for line in transcript_lines %}<div class="seg" data-start="{{ line.start_int }}"><div class="ts" data-start="{{ line.start_int }}">{{ line.mmss }}</div><div class="text">{{ line.text }}</div></div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <footer>
+    <div class="row">
+      <span><span class="k">clip_id</span> {{ clip_id }}</span>
+      <span><span class="k">whisper</span> {{ whisper_model }} ({{ whisper_lang }})</span>
+      <span><span class="k">summarizer</span> {{ summarizer }}</span>
+      <span><span class="k">pipeline</span> {{ duration_total_ms }}ms</span>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <span><a href="note.md">note.md</a></span>
+      <span><a href="transcript.json">transcript.json</a></span>
+      <span><a href="transcript.txt">transcript.txt</a></span>
+      <span><a href="summary.json">summary.json</a></span>
+      <span><a href="raw.log">raw.log</a></span>
+    </div>
+  </footer>
+</div>
+<script>
+(function () {
+  var audio = document.getElementById('audio');
+  if (!audio) return;
+  // Click any .ts → set audio.currentTime, play.
+  document.querySelectorAll('.transcript .ts').forEach(function (el) {
+    el.addEventListener('click', function () {
+      var t = parseInt(el.getAttribute('data-start') || '0', 10);
+      try { audio.currentTime = t; audio.play(); } catch (e) {}
+    });
+  });
+  // Highlight the segment currently playing.
+  var segs = Array.prototype.slice.call(document.querySelectorAll('.transcript .seg'));
+  var starts = segs.map(function (s) { return parseFloat(s.getAttribute('data-start') || '0'); });
+  audio.addEventListener('timeupdate', function () {
+    var t = audio.currentTime;
+    var activeIdx = -1;
+    for (var i = 0; i < starts.length; i++) {
+      if (starts[i] <= t) activeIdx = i; else break;
+    }
+    segs.forEach(function (s, i) {
+      s.classList.toggle('active', i === activeIdx);
+    });
+  });
+})();
+</script>
+</body>
+</html>

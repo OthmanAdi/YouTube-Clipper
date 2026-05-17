@@ -8,7 +8,7 @@ import httpx
 from youtube_clipper.config import OllamaSummarizerSettings
 from youtube_clipper.logging import get_logger
 
-from .base import SYSTEM_PROMPT, SummaryResult, build_user_prompt
+from .base import DetailLevel, SummaryResult, build_system_prompt, build_user_prompt
 
 log = get_logger(__name__)
 
@@ -23,12 +23,18 @@ class OllamaAdapter:
         self.name = f"ollama/{cfg.model}"
         self._client = client
 
-    async def summarize(self, transcript: str, *, language: str) -> SummaryResult:
+    async def summarize(
+        self,
+        transcript: str,
+        *,
+        language: str,
+        detail: DetailLevel = "standard",
+    ) -> SummaryResult:
         url = f"{self.cfg.endpoint.rstrip('/')}/api/chat"
         body = {
             "model": self.cfg.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": build_system_prompt(detail)},
                 {"role": "user", "content": build_user_prompt(transcript, language)},
             ],
             "format": "json",
@@ -52,6 +58,7 @@ class OllamaAdapter:
             return SummaryResult(
                 tldr=parsed["tldr"],
                 bullets=parsed["bullets"],
+                notable_quotes=parsed.get("notable_quotes", []),
                 tags=parsed.get("tags", []),
                 backend=self.name,
                 raw_response=data,

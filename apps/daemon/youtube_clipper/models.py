@@ -42,6 +42,10 @@ class ClipInput(BaseModel):
     summarizer: str = Field(pattern=r"^(azure|ollama)$")
     video_title: str | None = None
     channel_name: str | None = None
+    # Optional per-clip output dir override. None = use config.paths.output_dir (default).
+    output_dir: Path | None = None
+    # Summary intensity. "standard" = default; "quick" = terse; "deep" = thorough.
+    detail: str = Field(default="standard", pattern=r"^(quick|standard|deep)$")
 
 
 class ClipPaths(BaseModel):
@@ -67,6 +71,7 @@ class YouTubeMeta(BaseModel):
 class SummaryArtifact(BaseModel):
     tldr: str
     bullets: list[str]
+    notable_quotes: list[str] = Field(default_factory=list)
     tags: list[str]
     backend: str
 

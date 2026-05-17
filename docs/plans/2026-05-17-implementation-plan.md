@@ -102,7 +102,7 @@ YouTube-Clipper/
 - Create: `.gitignore`
 - Modify: working tree (git init)
 
-- [ ] Step 1: Run `git init` in `C:\Users\oasrvadmin\Documents\YouTube-Clipper`.
+- [ ] Step 1: Run `git init` in the repo root.
 
 - [ ] Step 2: Write `.gitignore` with:
 

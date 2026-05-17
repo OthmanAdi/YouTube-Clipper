@@ -12,13 +12,13 @@ class StubAdapter:
     def __init__(self, name="stub/x"):
         self.name = name
 
-    async def summarize(self, transcript, *, language):
+    async def summarize(self, transcript, *, language, detail="standard"):
         return SummaryResult(
-            tldr="An idea worth quoting.",
+            tldr=f"An idea worth quoting (detail={detail}).",
             bullets=["one", "two"],
             tags=["tag"],
             backend=self.name,
-            raw_response={"language": language},
+            raw_response={"language": language, "detail": detail},
         )
 
 
@@ -44,7 +44,7 @@ async def test_summarize_writes_summary(make_job, fake_ctx):
         out = await summarize(job, fake_ctx)
 
     assert out.summary is not None
-    assert out.summary.tldr == "An idea worth quoting."
+    assert "An idea worth quoting" in out.summary.tldr
     assert (job.paths.job_dir / "summary.json").exists()
     assert Stage.SUMMARIZE in out.durations_ms
     assert out.summarizer_used == "stub/x"
@@ -65,7 +65,7 @@ async def test_summarize_retries_then_succeeds(make_job, fake_ctx):
         name = "flaky/x"
         calls = 0
 
-        async def summarize(self, transcript, *, language):
+        async def summarize(self, transcript, *, language, detail="standard"):
             FlakyAdapter.calls += 1
             if FlakyAdapter.calls == 1:
                 raise RuntimeError("temporary 429")

@@ -4,6 +4,7 @@ created: {{ created_iso }}
 youtube:
   url: {{ url_with_t }}
   channel: {{ channel | default('Unknown', true) }}
+  channel_url: {{ channel_url | default('', true) }}
   channel_id: {{ channel_id | default('', true) }}
   title: "{{ (title | default('Untitled', true)) | replace('"', '\\"') }}"
   duration_full_s: {{ duration_full_s | default(0) }}
@@ -21,11 +22,13 @@ pipeline:
 {% endfor %}tags: [{{ tags | join(', ') }}]
 ---
 
-# {{ title | default('Untitled') }} — {{ start_mmss }} → {{ end_mmss }}
+# {{ title | default('Untitled') }}
 
-> [Watch on YouTube at {{ start_mmss }}]({{ url_with_t }})
+**{{ start_mmss }} → {{ end_mmss }}** · {{ length_label }} · [▶ Watch on YouTube]({{ url_with_t }}){% if channel and channel_url %} · [{{ channel }}]({{ channel_url }}){% elif channel %} · {{ channel }}{% endif %}
 
-Audio: `audio.mp3` ({{ length_s }}s, {{ audio_mb }} MB)
+![audio.mp3](audio.mp3)
+
+<audio controls preload="metadata" src="audio.mp3" style="width:100%;margin:6px 0 14px"></audio>
 
 ## TL;DR
 {{ tldr }}
@@ -33,16 +36,19 @@ Audio: `audio.mp3` ({{ length_s }}s, {{ audio_mb }} MB)
 ## Key Points
 {% for b in bullets %}- {{ b }}
 {% endfor %}
+{% if notable_quotes and notable_quotes|length > 0 %}
+## Notable Quotes
+{% for q in notable_quotes %}> {{ q }}
+
+{% endfor %}{% endif %}
 ## Verbatim Transcript
-<details><summary>Show full transcript</summary>
+<details><summary>Show full transcript ({{ transcript_segments }} segments, {{ transcript_words }} words)</summary>
 
-```
-{{ transcript_block }}
-```
-
+{% for line in transcript_lines %}- [`{{ line.mmss }}`]({{ url_base }}&t={{ line.start_int }}s) {{ line.text }}
+{% endfor %}
 </details>
 
-Job log: [raw.log](raw.log) · Summarized by: {{ summarizer }}
+Job log: [raw.log](raw.log) · Summarized by: {{ summarizer }} · Whisper: {{ whisper_model }} ({{ whisper_lang }})
 
 ## My Notes
 <!-- Sacrosanct. Re-runs never overwrite anything in or below this section. -->

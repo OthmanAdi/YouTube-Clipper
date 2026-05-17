@@ -73,14 +73,16 @@ def _atomic_write_manifest(path: Path, job: Job) -> None:
 
 def build_new_job(input: ClipInput, settings: AppSettings) -> Job:
     today = date.today()
-    settings.paths.output_dir.mkdir(parents=True, exist_ok=True)
-    suffix = next_clip_suffix(settings.paths.output_dir, today)
+    # Per-clip override beats the default output_dir.
+    base_output_dir = input.output_dir if input.output_dir is not None else settings.paths.output_dir
+    base_output_dir.mkdir(parents=True, exist_ok=True)
+    suffix = next_clip_suffix(base_output_dir, today)
     clip_id = build_clip_id(today, suffix)
     job_id = f"j_{clip_id.replace('-', '_')}"
     channel = input.channel_name or "unknown"
     title = input.video_title or "untitled"
     dir_name = build_job_dir_name(today, suffix, channel, title)
-    job_dir = settings.paths.output_dir / dir_name
+    job_dir = base_output_dir / dir_name
     job_dir.mkdir(parents=True, exist_ok=True)
     return Job(
         job_id=job_id,

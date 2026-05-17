@@ -8,11 +8,14 @@ export interface ClipRequest {
   summarizer: "azure" | "ollama";
   video_title?: string | null;
   channel_name?: string | null;
+  output_dir?: string | null;
+  detail?: "quick" | "standard" | "deep";
 }
 
 export interface ClipResponse {
   job_id: string;
   clip_id: string;
+  job_dir?: string;
 }
 
 export async function postClip(req: ClipRequest): Promise<ClipResponse> {
@@ -55,6 +58,17 @@ export async function getDaemonJob(jobId: string): Promise<DaemonJobView | null>
   if (resp.status === 404) return null;
   if (!resp.ok) throw new Error(`GET /jobs/${jobId} ${resp.status}`);
   return (await resp.json()) as DaemonJobView;
+}
+
+export async function makeWebsite(jobId: string): Promise<{ path: string }> {
+  const resp = await fetch(`${DAEMON_BASE}/clip/${encodeURIComponent(jobId)}/website`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => "");
+    throw new Error(`POST /clip/${jobId}/website ${resp.status}: ${txt.slice(0, 300)}`);
+  }
+  return (await resp.json()) as { path: string };
 }
 
 export function openEventsWs(jobId: string, onMessage: (m: any) => void): WebSocket {

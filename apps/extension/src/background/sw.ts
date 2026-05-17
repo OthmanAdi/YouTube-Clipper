@@ -3,7 +3,7 @@
 // - Persists all state in chrome.storage.session so the popup is always re-renderable from disk
 //   and we survive MV3 service-worker eviction.
 
-import { postClip, openEventsWs, getDaemonJob } from "../lib/api.js";
+import { postClip, openEventsWs, getDaemonJob, makeWebsite } from "../lib/api.js";
 import {
   type JobView,
   type PendingSelection,
@@ -131,7 +131,11 @@ async function handleRangeSelected(msg: PendingSelection) {
   await maybeOpenPopup();
 }
 
-async function handleExtract(summarizer: "azure" | "ollama"): Promise<{ ok: boolean; job_id?: string; error?: string }> {
+async function handleExtract(
+  summarizer: "azure" | "ollama",
+  outputDirOverride: string | null,
+  detail: "quick" | "standard" | "deep"
+): Promise<{ ok: boolean; job_id?: string; error?: string }> {
   const pending = await getPending();
   if (!pending) return { ok: false, error: "no pending selection" };
 
@@ -143,6 +147,8 @@ async function handleExtract(summarizer: "azure" | "ollama"): Promise<{ ok: bool
       summarizer,
       video_title: pending.video_title,
       channel_name: pending.channel_name,
+      output_dir: outputDirOverride || null,
+      detail,
     });
     const job: JobView = {
       job_id: resp.job_id,
@@ -151,14 +157,17 @@ async function handleExtract(summarizer: "azure" | "ollama"): Promise<{ ok: bool
       start_s: pending.start_s,
       end_s: pending.end_s,
       summarizer,
+      detail,
       video_title: pending.video_title,
       channel_name: pending.channel_name,
+      output_dir_override: outputDirOverride,
       created_at: nowMs(),
       state: "queued",
       current_stage: null,
       stages_done: [],
       last_log: "queued",
       note_path: null,
+      website_path: null,
       error_stage: null,
       error_message: null,
       durations_ms: {},
@@ -169,6 +178,31 @@ async function handleExtract(summarizer: "azure" | "ollama"): Promise<{ ok: bool
     return { ok: true, job_id: resp.job_id };
   } catch (e: any) {
     return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
+async function handleMakeWebsite(jobId: string): Promise<{ ok: boolean; path?: string; error?: string }> {
+  try {
+    const { path } = await makeWebsite(jobId);
+    await patchJob(jobId, { website_path: path });
+    return { ok: true, path };
+  } catch (e: any) {
+    return { ok: false, error: String(e?.message ?? e) };
+  }
+}
+
+async function handleClearDone(): Promise<void> {
+  const jobs = await getJobs();
+  for (const j of jobs) {
+    if (j.state === "done" || j.state === "failed") {
+      try {
+        activeWs.get(j.job_id)?.close();
+      } catch {
+        /* ignore */
+      }
+      activeWs.delete(j.job_id);
+      await removeJob(j.job_id);
+    }
   }
 }
 
@@ -246,8 +280,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (msg?.type === "popup.extract") {
         const summarizer = msg.summarizer === "ollama" ? "ollama" : "azure";
-        const r = await handleExtract(summarizer);
+        const outputDirOverride =
+          typeof msg.output_dir === "string" && msg.output_dir.trim().length > 0
+            ? msg.output_dir.trim()
+            : null;
+        const detail =
+          msg.detail === "quick" || msg.detail === "deep" ? msg.detail : "standard";
+        const r = await handleExtract(summarizer, outputDirOverride, detail);
         sendResponse(r);
+        return;
+      }
+      if (msg?.type === "popup.make_website") {
+        const r = await handleMakeWebsite(String(msg.job_id));
+        sendResponse(r);
+        return;
+      }
+      if (msg?.type === "popup.clear_done") {
+        await handleClearDone();
+        sendResponse({ ok: true });
         return;
       }
       if (msg?.type === "popup.dismiss_pending") {

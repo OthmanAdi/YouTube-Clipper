@@ -38,10 +38,12 @@ def create_app() -> FastAPI:
     )
     from .routes_clip import router as clip_router
     from .routes_health import router as health_router
+    from .routes_website import router as website_router
     from .ws_events import router as ws_router
 
     app.include_router(clip_router)
     app.include_router(health_router)
+    app.include_router(website_router)
     app.include_router(ws_router)
     return app
 

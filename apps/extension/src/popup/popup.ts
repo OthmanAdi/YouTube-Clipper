@@ -1,13 +1,16 @@
 // Popup: reads state from chrome.storage.session, re-renders on every change.
-// All persistence lives in SW + storage — the popup is pure view.
+// Persists prefs (default summarizer, output dir override) in chrome.storage.local.
 
 import { getHealth } from "../lib/api.js";
 import { mmss, lengthLabel } from "../lib/format.js";
 import {
   type JobView,
   type PendingSelection,
+  type UiPrefs,
   getPending,
   getJobs,
+  getPrefs,
+  setPrefs,
   onChange,
 } from "../lib/state.js";
 
@@ -40,7 +43,6 @@ function progressPercent(job: JobView): number {
   }
   const doneCount = job.stages_done.length;
   if (doneCount === STAGE_ORDER.length) return 100;
-  // While running a stage that is not yet in stages_done, show "completed + half of current".
   const inFlight = job.current_stage && !job.stages_done.includes(job.current_stage) ? 0.5 : 0;
   return ((doneCount + inFlight) / STAGE_ORDER.length) * 100;
 }
@@ -59,11 +61,38 @@ function iconFor(job: JobView): string {
 }
 
 async function copyText(text: string) {
+  if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
   } catch {
     /* ignore */
   }
+}
+
+function folderOf(p: string): string {
+  return p.replace(/[\\/][^\\/]+$/, "");
+}
+
+// Build a comprehensive Claude Code prompt for custom website design.
+function buildClaudePrompt(job: JobView): string {
+  const folder = job.note_path ? folderOf(job.note_path) : "";
+  return `Use the frontend-design skill to build a stunning custom single-page website for this YouTube clip extraction.
+
+Inputs:
+- Folder: ${folder}
+- note.md (full markdown, with TL;DR, bullets, notable quotes, transcript)
+- summary.json (structured: tldr, bullets, notable_quotes, tags)
+- transcript.json (word-level segments with timestamps)
+- audio.mp3 (playable in browser)
+
+Title: "${job.video_title ?? ""}"
+Channel: "${job.channel_name ?? ""}"
+Range: ${mmss(job.start_s)} → ${mmss(job.end_s)} (${lengthLabel(job.end_s - job.start_s)})
+Source: ${job.url}
+
+Output: a single self-contained index.html in the SAME folder. Embed the audio (audio.mp3) with a click-to-jump transcript. Editorial dark theme. No CDN dependencies — inline CSS and minimal vanilla JS only. Make it beautiful and shareable.
+
+Do NOT overwrite the existing index.html that the daemon's built-in template wrote — save your custom version as index.custom.html next to it.`;
 }
 
 function buildJobRow(job: JobView): HTMLElement {
@@ -88,7 +117,7 @@ function buildJobRow(job: JobView): HTMLElement {
         : job.current_stage
           ? `${job.current_stage} (${stageIndex(job.current_stage) + 1}/${STAGE_ORDER.length})`
           : "queued";
-  sub.textContent = `${range} · ${stageLabel} · ${job.summarizer}`;
+  sub.textContent = `${range} · ${stageLabel} · ${job.summarizer} · ${job.detail || "standard"}`;
 
   const bar = node.querySelector(".job-bar") as HTMLElement;
   bar.style.width = `${progressPercent(job)}%`;
@@ -98,7 +127,7 @@ function buildJobRow(job: JobView): HTMLElement {
   const logEl = node.querySelector(".job-log")!;
   logEl.textContent = job.last_log || "";
 
-  // Stages pill row
+  // Stage pills
   const stagesWrap = node.querySelector(".job-stages") as HTMLElement;
   stagesWrap.innerHTML = "";
   for (const s of STAGE_ORDER) {
@@ -112,32 +141,69 @@ function buildJobRow(job: JobView): HTMLElement {
     stagesWrap.appendChild(pill);
   }
 
-  // Actions
+  // Actions row
   const actions = node.querySelector(".job-actions") as HTMLElement;
+  const detailsEl = node.querySelector(".job-details") as HTMLElement;
   actions.innerHTML = "";
+
   if (job.note_path) {
     const pathEl = document.createElement("div");
     pathEl.className = "path-text";
     pathEl.textContent = job.note_path;
-    actions.parentElement!.insertBefore(pathEl, actions);
+    detailsEl.insertBefore(pathEl, actions);
+
     const copyNote = document.createElement("button");
     copyNote.textContent = "Copy note path";
     copyNote.onclick = () => copyText(job.note_path || "");
     actions.appendChild(copyNote);
+
     const copyFolder = document.createElement("button");
     copyFolder.textContent = "Copy folder";
-    copyFolder.onclick = () => {
-      const folder = (job.note_path || "").replace(/[\\/][^\\/]+$/, "");
-      copyText(folder);
-    };
+    copyFolder.onclick = () => copyText(folderOf(job.note_path || ""));
     actions.appendChild(copyFolder);
   }
+
+  if (job.state === "done") {
+    if (job.website_path) {
+      const openSite = document.createElement("button");
+      openSite.textContent = "Open website";
+      openSite.onclick = () => {
+        const u = "file:///" + (job.website_path || "").replace(/\\/g, "/");
+        chrome.tabs.create({ url: u }).catch(() => copyText(job.website_path || ""));
+      };
+      actions.appendChild(openSite);
+    } else {
+      const makeSite = document.createElement("button");
+      makeSite.textContent = "Generate website";
+      makeSite.className = "primary";
+      makeSite.onclick = async () => {
+        makeSite.disabled = true;
+        makeSite.textContent = "Generating…";
+        const r = await chrome.runtime.sendMessage({ type: "popup.make_website", job_id: job.job_id });
+        if (!r?.ok) {
+          makeSite.disabled = false;
+          makeSite.textContent = "Generate website";
+          alert(`Website generation failed: ${r?.error ?? "unknown"}`);
+        }
+        // success: storage onChange triggers a re-render with the "Open website" button.
+      };
+      actions.appendChild(makeSite);
+    }
+
+    const handoff = document.createElement("button");
+    handoff.textContent = "Custom design (Claude prompt)";
+    handoff.title = "Copies a frontend-design prompt to clipboard for use in Claude Code";
+    handoff.onclick = () => copyText(buildClaudePrompt(job));
+    actions.appendChild(handoff);
+  }
+
   if (job.state === "failed" && job.error_message) {
     const errEl = document.createElement("div");
     errEl.className = "error-text";
     errEl.textContent = `${job.error_stage}: ${job.error_message}`;
-    actions.parentElement!.insertBefore(errEl, actions);
+    detailsEl.insertBefore(errEl, actions);
   }
+
   const dismiss = document.createElement("button");
   dismiss.textContent = "Dismiss";
   dismiss.onclick = async () => {
@@ -148,7 +214,6 @@ function buildJobRow(job: JobView): HTMLElement {
   // Toggle expansion
   const toggle = node.querySelector(".job-toggle") as HTMLButtonElement;
   const details = node.querySelector(".job-details") as HTMLElement;
-  // Default expanded if running, failed, or done (so user sees full info).
   details.hidden = job.state === "queued";
   if (!details.hidden) toggle.classList.add("open");
   toggle.onclick = () => {
@@ -159,7 +224,7 @@ function buildJobRow(job: JobView): HTMLElement {
   return node;
 }
 
-function renderPending(pending: PendingSelection | null) {
+function renderPending(pending: PendingSelection | null, prefs: UiPrefs) {
   if (!pending) {
     show("pending-card", false);
     return;
@@ -171,6 +236,13 @@ function renderPending(pending: PendingSelection | null) {
     "p-range",
     `${mmss(pending.start_s)} → ${mmss(pending.end_s)}  (${lengthLabel(pending.end_s - pending.start_s)})`
   );
+  // Restore last-used summarizer + detail + output dir.
+  const sel = q<HTMLSelectElement>("summarizer-select");
+  if (sel) sel.value = prefs.default_summarizer;
+  const detSel = q<HTMLSelectElement>("detail-select");
+  if (detSel) detSel.value = prefs.default_detail;
+  const od = q<HTMLInputElement>("output-dir-input");
+  if (od && !od.value) od.value = prefs.output_dir_override ?? "";
 }
 
 function renderJobs(jobs: JobView[]) {
@@ -182,6 +254,8 @@ function renderJobs(jobs: JobView[]) {
   }
   show("jobs-section", true);
   setText("jobs-count", `(${jobs.length})`);
+  const finishedCount = jobs.filter((j) => j.state === "done" || j.state === "failed").length;
+  show("clear-done-btn", finishedCount > 0);
   list.innerHTML = "";
   for (const job of jobs) {
     list.appendChild(buildJobRow(job));
@@ -194,8 +268,8 @@ function renderEmptyState(pending: PendingSelection | null, jobs: JobView[]) {
 }
 
 async function render() {
-  const [pending, jobs] = await Promise.all([getPending(), getJobs()]);
-  renderPending(pending);
+  const [pending, jobs, prefs] = await Promise.all([getPending(), getJobs(), getPrefs()]);
+  renderPending(pending, prefs);
   renderJobs(jobs);
   renderEmptyState(pending, jobs);
 }
@@ -215,8 +289,20 @@ async function wireHealthChip() {
 }
 
 async function onExtractClicked() {
-  const summarizer = (q<HTMLSelectElement>("summarizer-select")).value;
-  const r = await chrome.runtime.sendMessage({ type: "popup.extract", summarizer });
+  const summarizer = (q<HTMLSelectElement>("summarizer-select")).value as "azure" | "ollama";
+  const detail = (q<HTMLSelectElement>("detail-select")).value as "quick" | "standard" | "deep";
+  const outputDir = (q<HTMLInputElement>("output-dir-input")).value.trim();
+  await setPrefs({
+    default_summarizer: summarizer,
+    default_detail: detail,
+    output_dir_override: outputDir || null,
+  });
+  const r = await chrome.runtime.sendMessage({
+    type: "popup.extract",
+    summarizer,
+    output_dir: outputDir || null,
+    detail,
+  });
   if (!r?.ok) {
     alert(`Extract failed: ${r?.error || "unknown"}`);
   }
@@ -227,9 +313,12 @@ async function onDismissPending() {
   await chrome.runtime.sendMessage({ type: "popup.dismiss_pending" });
 }
 
+async function onClearDone() {
+  await chrome.runtime.sendMessage({ type: "popup.clear_done" });
+}
+
 async function init() {
   await wireHealthChip();
-  // Ask SW to re-attach any in-flight WSs that might have been lost on eviction.
   try {
     await chrome.runtime.sendMessage({ type: "popup.rehydrate" });
   } catch {
@@ -239,11 +328,10 @@ async function init() {
 
   q("extract-btn")?.addEventListener("click", () => void onExtractClicked());
   q("dismiss-pending-btn")?.addEventListener("click", () => void onDismissPending());
+  q("clear-done-btn")?.addEventListener("click", () => void onClearDone());
 
-  // Live updates: whenever the SW updates the storage, re-render the whole popup.
   onChange(() => void render());
 
-  // Re-check daemon health every 3s while the popup is open.
   setInterval(() => void wireHealthChip(), 3000);
 }
 

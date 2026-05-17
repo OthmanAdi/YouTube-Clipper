@@ -1,0 +1,227 @@
+# YouTube-Clipper — Structured Snapshot for LLM Consumption
+
+> This file is written for LLMs and coding agents reading the repo cold. It explains the
+> architecture, invariants, file layout, and how to safely extend the codebase, in plain prose
+> with no ambiguity. Humans will prefer README.md. Read this if you're about to write code.
+
+## What this is
+
+A Chrome MV3 browser extension + local FastAPI daemon that turns an `Alt+drag` range on the
+YouTube progress bar into a self-contained folder of artifacts: verbatim audio (mp3),
+faster-whisper transcript (JSON + txt), AI summary (TL;DR + bullets + notable quotes + tags),
+markdown note, optional standalone editorial website (index.html).
+
+Local-first. Daemon binds 127.0.0.1 only. Audio never leaves the box (Whisper is local). The
+transcript leaves the box only if the user picks the Azure Foundry summarizer; Ollama keeps it
+local.
+
+## The architecture in one breath
+
+Thin extension → thick local daemon. Six pipeline stages. Five are deterministic wrappers around
+CLI tools (`yt-dlp`, `ffmpeg`, `faster-whisper`). One is the LLM call (the summarizer). Each
+stage reads from disk, writes to disk, updates a JSON manifest, emits structured logs tagged
+with `job_id` via `structlog` contextvars. The runner orchestrates the stages serially in a
+single-worker asyncio queue. The WebSocket route pushes per-stage events to the popup.
+
+The "5 deterministic + 1 AI" ratio IS the architecture. Robustness comes from minimizing AI
+surface. Every stage failure is a known exception class, in a known stage, with a known
+recovery path (retries with explicit fallback chains).
+
+## Pipeline stages (apps/daemon/youtube_clipper/pipeline/)
+
+1. `stage_01_resolve.py` — `yt-dlp -J <url>` → `metadata.json`. Rejects live streams.
+2. `stage_02_download.py` — `yt-dlp -f bestaudio --download-sections "*S-E"` → `audio.raw.<ext>`
+   (m4a / webm / opus, whatever YouTube serves). NO `--force-keyframes-at-cuts` (caused a
+   re-encode stall on HLS streams), NO `--extract-audio` (stage 3 does mp3 conversion under
+   our own timeout). 90s per-attempt timeout, up to 4 attempts with backoff.
+3. `stage_03_normalize.py` — `ffmpeg -ar 16000 -ac 1 -c:a libmp3lame -b:a 64k` → `audio.mp3`.
+4. `stage_04_transcribe.py` — `faster_whisper.WhisperModel` with auto-fallback chain:
+   `(device, compute_type)` from config → `(cuda, int8)` → `(cpu, int8)`. Each tier is tried
+   in order. Output: `transcript.json` (segments with word timestamps), `transcript.txt`
+   (`[mm:ss] text` lines).
+5. `stage_05_summarize.py` — picks adapter (`azure` or `ollama` from `job.input.summarizer`),
+   calls `.summarize(transcript, language=..., detail=...)`. Retries on exception with
+   exponential backoff. Output: `summary.json`.
+6. `stage_06_write_note.py` — renders `note_template.md.j2` → `note.md`. Preserves `## My Notes`
+   block from any existing file (sacrosanct user section). Atomic write via temp+rename.
+
+`pipeline/runner.py` is the orchestrator. `PipelineRunner._run(job)` loops through `STAGE_ORDER`,
+calling each stage's `async def stage(job, ctx) -> Job`. On exception, it sets `state="failed"`,
+writes the manifest, builds `raw.log` from the daily pipeline log filtered to this `job_id`,
+and publishes a `failed` event over the per-job WS. On success, same but with `done`.
+
+## Summarizer adapters (apps/daemon/youtube_clipper/adapters/)
+
+`base.py` defines the `Summarizer` protocol, the `SummaryResult` pydantic model, and
+`build_system_prompt(detail)` which generates a level-specific system prompt. Detail levels:
+
+- `quick` — 3-5 short bullets (8-20 words), tldr 30-60 words, up to 1 quote.
+- `standard` — 5-8 bullets (12-28 words), tldr 60-110 words, up to 3 quotes.
+- `deep` — 8-12 bullets (18-40 words), tldr 100-180 words, up to 5 quotes.
+
+All adapters MUST return strict JSON with keys exactly `tldr`, `bullets`, `notable_quotes`,
+`tags`. Both Azure and Ollama adapters use JSON-mode (Azure: `response_format=json_object`,
+Ollama: `format=json`).
+
+To add a third backend (Groq, Together, OpenRouter, etc.):
+
+1. Create `adapters/<name>.py` with class `XxxAdapter` implementing the `Summarizer` protocol.
+2. Add `_pick_adapter()` branch in `pipeline/stage_05_summarize.py`.
+3. Add the new summarizer name to the `pattern` regex in `ClipInput.summarizer` and
+   `ClipRequest.summarizer`.
+4. Update the popup `<select id="summarizer-select">` options.
+
+## API endpoints (apps/daemon/youtube_clipper/api/)
+
+- `GET /health` — daemon liveness, summarizer toggles, whisper model.
+- `POST /clip` — enqueue a job. Body fields:
+    `url, start_s, end_s, summarizer ("azure"|"ollama"), detail ("quick"|"standard"|"deep"),
+     video_title?, channel_name?, output_dir?`.
+    Returns `{job_id, clip_id, job_dir}`. Validates range against `ux.min_range_seconds` and
+    `ux.max_range_seconds`. `output_dir` must be absolute if provided.
+- `GET /jobs/{job_id}` — current Job state (the manifest, mode='json').
+- `POST /clip/{job_id}/website` — render `index.html` from the completed job. 409 if not done.
+- `WS /events/{job_id}` — streams `enqueued`/`running`/`stage_start`/`stage_done`/`progress`/
+  `done`/`failed`/`ping` messages. Closes after `done`/`failed`.
+
+## Browser extension (apps/extension/)
+
+Chrome Manifest V3. TypeScript, compiled by `tsc`. NO bundler — 7 npm devDependencies total
+(typescript + @types/chrome + @types/node + transitives). The build script (`scripts/build.mjs`)
+is 80 lines: `tsc`, copy manifest+html+css+icons+public-assets to `dist/`.
+
+- `content/content.ts` — listens for `Alt+mousedown` on `.ytp-progress-bar`, paints a pink
+  overlay during drag, sends `clip.range_selected` to the SW on release. SELF-CONTAINED — no
+  ES imports — because MV3 content scripts don't support module imports.
+- `background/sw.ts` — bridges popup ↔ daemon. Opens one WS per job. Persists all state in
+  `chrome.storage.session` (survives SW eviction). Uses a per-job promise queue
+  (`enqueueApply`) to serialize WS events — a critical fix for a race condition where
+  `stage_done` could clobber the `done` event.
+- `popup/popup.ts` — pure view, no state. Reads from `chrome.storage.session` via
+  `state.ts` helpers. Re-renders on `chrome.storage.onChanged`.
+- `lib/state.ts` — typed shape of `PendingSelection`, `JobView`, `UiPrefs`. Session storage
+  for active state, local storage for preferences (default summarizer, default detail,
+  output dir override).
+- `lib/api.ts` — `httpx`-equivalent: `postClip`, `getHealth`, `getDaemonJob`, `makeWebsite`,
+  `openEventsWs`.
+
+## Config + secrets (config/)
+
+`config.toml` is the runtime config. Loaded by `youtube_clipper.config.load_settings()`. Env
+vars referenced as `${NAME}` are interpolated from process env. Relative `output_dir` /
+`logs_dir` resolve relative to repo root. Absolute paths kept as-is. `.secrets.env` is
+git-ignored; the example template has only placeholders (`replace-me`).
+
+## Critical invariants (do not break)
+
+1. **`## My Notes` is sacrosanct.** Stage 6 reads any existing `note.md`, extracts everything
+   from `^## My Notes$` to EOF, renders the new note from the template UP TO (not including)
+   that heading, then concatenates. Atomic write via temp+rename. Editing the template?
+   Keep `## My Notes` as the FINAL section.
+2. **Each pipeline stage is idempotent.** Inputs come from prior-stage disk outputs, not from
+   in-memory carry-over. A re-run skips work it can detect on disk. The `Retry from stage N`
+   feature depends on this.
+3. **Per-stage timeout + retry budget** is in `config.toml [retry]` and per-stage hard caps.
+   Stage 2 in particular MUST have a per-attempt cap (currently 90s) or hung yt-dlp blocks
+   forever — that was the original bug.
+4. **WS event ordering** matters. The popup updates state from events; if `stage_done(write_note)`
+   and `done` arrive on adjacent ticks and apply concurrently, the older one wins on
+   read-modify-write. The SW serializes per-job event apply via `enqueueApply()`.
+5. **Daemon binds 127.0.0.1 only.** No `0.0.0.0`. No auth. The threat model assumes a single
+   local user.
+
+## Tests (apps/daemon/tests/)
+
+47 pytest tests. Run with `uv run pytest` from `apps/daemon/`.
+
+- `tests/unit/test_config.py` — env interpolation, relative path resolution.
+- `tests/unit/test_models.py` — Stage enum order, next_stage(), Job roundtrip.
+- `tests/unit/test_slug.py` — slugify, clip_id, folder naming.
+- `tests/unit/test_logging.py` — structlog JSONL with contextvars.
+- `tests/unit/test_subprocess.py` — async run helper.
+- `tests/unit/test_stage_0[1-6]_*.py` — each stage with mocked subprocess / mocked Whisper.
+- `tests/unit/test_adapters.py` — Azure + Ollama adapters via `httpx.MockTransport`.
+- `tests/unit/test_website.py` — website renderer covers all sections.
+- `tests/integration/test_api_smoke.py` — FastAPI app boots and validates requests.
+
+LLM responses are NEVER mocked at the network level in tests — the adapters mock the HTTP
+layer instead, so the prompt building and JSON validation are exercised end-to-end.
+
+## File map (top-level, with purpose)
+
+```
+.gitignore                          Standard + output/ + logs/ + .secrets.env + dist/ + .venv/
+LICENSE                             MIT
+MISSION.md                          Why the project exists (the original brief)
+PROFILE.md                          Who this is built for (target user persona)
+README.md                           Public-facing intro + install + usage
+llm.txt                             THIS FILE — structured snapshot for LLMs
+apps/daemon/pyproject.toml          Python deps (pinned), uv project
+apps/daemon/youtube_clipper/        The daemon package
+apps/extension/package.json         npm deps (pinned, 7 packages)
+apps/extension/manifest.json        MV3 manifest
+apps/extension/scripts/build.mjs    80-line replacement for a bundler
+apps/extension/src/                 TS source
+config/config.toml                  Runtime config
+config/.secrets.env.example         Env-var template (no real secrets)
+scripts/install.ps1                 Bootstrap (uv sync + npm ci --ignore-scripts + build)
+scripts/start-daemon.ps1            Run uvicorn with secrets loaded
+scripts/stop-daemon.ps1             Kill whatever owns port 7777
+scripts/doctor.ps1                  Green/red probe table
+docs/specs/                         Design spec (committed for transparency)
+docs/plans/                         Implementation plan (committed for transparency)
+docs/runbook.md                     Daily-use playbook + failure recovery
+output/                             clip folders land here (gitignored)
+logs/                               daily-rotated pipeline.jsonl + daemon stderr (gitignored)
+```
+
+## How to extend
+
+### Add a new pipeline stage
+
+1. Create `apps/daemon/youtube_clipper/pipeline/stage_07_<name>.py` implementing
+   `async def <name>(job: Job, ctx: PipelineContext) -> Job`. Bind stage via
+   `bind_stage(Stage.<NEW>.value)` for log correlation.
+2. Add to `Stage` enum and `STAGE_ORDER` in `models.py`.
+3. Add to `STAGE_FNS` in `runner.py`.
+4. Add to popup `STAGE_ORDER` constant in `popup/popup.ts` so the progress bar reflects 7/7.
+5. Add a unit test in `tests/unit/test_stage_07_<name>.py`.
+
+### Add a new summarizer backend
+
+See "Summarizer adapters" section above.
+
+### Add a new note.md output field
+
+1. Add it to `SummaryArtifact` in `models.py` (and to `SummaryResult` in `adapters/base.py`,
+   plus pass it through in each adapter's return).
+2. Extend the system prompt in `adapters/base.py::build_system_prompt`.
+3. Add the new variable in `stage_06_write_note.py`'s `ctx_vars`.
+4. Render it in `note_template.md.j2`.
+5. Render it in `website/template.html.j2` if you want it on the website too.
+
+### Add a new front-end browser support (Firefox / Safari)
+
+The extension is Chrome MV3. Firefox supports MV3 with minor manifest tweaks. The daemon is
+browser-agnostic — only the extension needs porting.
+
+## Anti-patterns to avoid
+
+- Do NOT bundle the extension with rollup/esbuild/webpack/vite. `tsc` is enough; the build
+  script is 80 lines; the supply-chain surface is currently 7 npm packages. Adding a bundler
+  would inflate that 50x.
+- Do NOT use `localhost` in URLs from PowerShell. Use `127.0.0.1`. PowerShell resolves
+  `localhost` to `::1` first, and Ollama by default only binds IPv4.
+- Do NOT add per-stage logic to `runner.py`. The runner is a pure orchestrator. Stage logic
+  lives in `pipeline/stage_XX_*.py`.
+- Do NOT write to `note.md` directly. Always go through `_atomic_write` + the My-Notes-
+  preserving template render in `stage_06_write_note.py`.
+- Do NOT remove the per-job WS event queue in the SW. The race it solves is real (a closely-
+  spaced `stage_done` after `done` reads pre-`done` state and writes back, clobbering the
+  final state to "running").
+- Do NOT introduce `--force-keyframes-at-cuts` or `--extract-audio` flags in stage 2's
+  yt-dlp invocation. Both caused multi-minute stalls on HLS streams. Stage 3 normalizes.
+
+## License
+
+MIT. See LICENSE.

@@ -30,9 +30,26 @@ def _mmss(t: float) -> str:
     return f"{m:02d}:{s:02d}"
 
 
+def _length_label(seconds: float) -> str:
+    seconds = max(0, int(round(seconds)))
+    if seconds < 60:
+        return f"{seconds}s"
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return f"{m}m {s}s"
+    h, m = divmod(m, 60)
+    return f"{h}h {m}m {s}s"
+
+
 def _build_url_with_t(url: str, start_s: float) -> str:
     sep = "&" if "?" in url else "?"
     return f"{url}{sep}t={int(start_s)}s"
+
+
+def _channel_url(channel_id: str | None) -> str | None:
+    if not channel_id:
+        return None
+    return f"https://www.youtube.com/channel/{channel_id}"
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -66,26 +83,41 @@ async def write_note(job: Job, ctx: PipelineContext) -> Job:
         raise RuntimeError("write_note requires audio from stage 3")
 
     transcript = json.loads(job.paths.transcript_json.read_text(encoding="utf-8"))
-    transcript_block_lines = [
-        f"[{_mmss(seg['start'])}] {seg['text'].strip()}"
-        for seg in transcript["segments"]
+    transcript_segments = transcript.get("segments", [])
+    transcript_lines = [
+        {
+            "mmss": _mmss(seg["start"]),
+            "start_int": int(seg["start"]),
+            "text": seg["text"].strip(),
+        }
+        for seg in transcript_segments
     ]
+    word_count = sum(len(seg.get("text", "").split()) for seg in transcript_segments)
 
     audio_mb = round(job.paths.audio.stat().st_size / (1024 * 1024), 2)
     length_s = round(job.input.end_s - job.input.start_s, 2)
     duration_total_ms = sum(job.durations_ms.values())
+    channel_id = job.youtube.channel_id if job.youtube else None
+
+    # url_base is the URL with no &t suffix, used for per-line jump links.
+    url_base = job.input.url
+    if "?" not in url_base:
+        url_base = url_base + "?dummy=1"  # ensures the & in &t works in the template
 
     ctx_vars = dict(
         clip_id=job.clip_id,
         created_iso=job.created_at.astimezone().isoformat(timespec="seconds"),
         url_with_t=_build_url_with_t(job.input.url, job.input.start_s),
+        url_base=url_base,
         channel=(job.youtube.channel if job.youtube else None) or job.input.channel_name,
-        channel_id=(job.youtube.channel_id if job.youtube else None),
+        channel_id=channel_id,
+        channel_url=_channel_url(channel_id) or "",
         title=(job.youtube.title if job.youtube else None) or job.input.video_title,
         duration_full_s=(job.youtube.duration_full_s if job.youtube else 0) or 0,
         start_s=round(job.input.start_s, 2),
         end_s=round(job.input.end_s, 2),
         length_s=length_s,
+        length_label=_length_label(length_s),
         whisper_model=ctx.settings.whisper.model,
         whisper_lang=transcript.get("language", "?"),
         summarizer=job.summarizer_used or "unknown",
@@ -94,10 +126,13 @@ async def write_note(job: Job, ctx: PipelineContext) -> Job:
         tags=job.summary.tags,
         tldr=job.summary.tldr,
         bullets=job.summary.bullets,
+        notable_quotes=job.summary.notable_quotes,
         start_mmss=_mmss(job.input.start_s),
         end_mmss=_mmss(job.input.end_s),
         audio_mb=audio_mb,
-        transcript_block="\n".join(transcript_block_lines),
+        transcript_lines=transcript_lines,
+        transcript_segments=len(transcript_segments),
+        transcript_words=word_count,
     )
 
     template = _env.get_template("note_template.md.j2")

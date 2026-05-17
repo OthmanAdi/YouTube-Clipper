@@ -77,3 +77,52 @@ def test_missing_env_var_raises_clear_error(tmp_path, monkeypatch):
 def test_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_settings(tmp_path / "nope.toml")
+
+
+def test_relative_paths_resolve_to_repo_root(tmp_path):
+    """Relative output_dir/logs_dir should resolve to absolute paths under REPO_ROOT."""
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(
+        """
+[paths]
+output_dir = "./output"
+logs_dir = "./logs"
+ffmpeg_bin = "ffmpeg"
+yt_dlp_bin = "yt-dlp"
+
+[daemon]
+host = "127.0.0.1"
+port = 7777
+
+[whisper]
+model = "medium"
+device = "cpu"
+compute_type = "int8"
+
+[summarizer.azure]
+enabled = false
+endpoint = "https://x.test"
+api_key = "x"
+
+[summarizer.ollama]
+enabled = true
+endpoint = "http://127.0.0.1:11434"
+model = "hermes3:8b"
+
+[retry]
+download_max_attempts = 4
+summarize_max_attempts = 3
+
+[ux]
+pause_video_on_drag = false
+min_range_seconds = 2
+max_range_seconds = 1200
+""",
+        encoding="utf-8",
+    )
+    s = load_settings(cfg)
+    # Relative paths should be resolved (i.e. now absolute):
+    assert s.paths.output_dir.is_absolute()
+    assert s.paths.logs_dir.is_absolute()
+    assert s.paths.output_dir.name == "output"
+    assert s.paths.logs_dir.name == "logs"

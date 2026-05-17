@@ -29,12 +29,17 @@ def _seed(job):
     job.paths.audio = aud
 
     job.summary = SummaryArtifact(
-        tldr="Idea.", bullets=["b1", "b2"], tags=["ai"],
+        tldr="Idea.", bullets=["b1", "b2"], notable_quotes=["one verbatim quote"],
+        tags=["ai"],
         backend="azure-foundry/gpt-4o-mini",
     )
     job.summarizer_used = "azure-foundry/gpt-4o-mini"
     job.youtube = YouTubeMeta(
-        video_id="abc", title="A Title", channel="A Channel", duration_full_s=600
+        video_id="abc",
+        title="A Title",
+        channel="A Channel",
+        channel_id="UCabc",
+        duration_full_s=600,
     )
     for s in (Stage.RESOLVE, Stage.DOWNLOAD, Stage.NORMALIZE, Stage.TRANSCRIBE, Stage.SUMMARIZE):
         job.durations_ms[s] = 100
@@ -46,9 +51,14 @@ async def test_write_note_fresh(make_job, fake_ctx):
     job = _seed(make_job())
     await write_note(job, fake_ctx)
     out = (job.paths.job_dir / "note.md").read_text(encoding="utf-8")
-    assert "# A Title — 00:23 → 01:47" in out
+    assert "# A Title" in out
+    assert "**00:23 → 01:47**" in out
     assert "## TL;DR" in out
     assert "- b1" in out
+    assert "## Notable Quotes" in out
+    assert "one verbatim quote" in out
+    assert "[A Channel](https://www.youtube.com/channel/UCabc)" in out
+    assert "<audio controls" in out
     assert "## My Notes" in out
     assert "Summarized by: azure-foundry/gpt-4o-mini" in out
 
@@ -65,7 +75,8 @@ async def test_write_note_preserves_my_notes(make_job, fake_ctx):
     out = pre.read_text(encoding="utf-8")
     assert "MY PRECIOUS NOTES" in out
     assert "### subheading" in out
-    assert "# A Title — 00:23 → 01:47" in out
+    assert "# A Title" in out
+    assert "**00:23 → 01:47**" in out
 
 
 @pytest.mark.asyncio

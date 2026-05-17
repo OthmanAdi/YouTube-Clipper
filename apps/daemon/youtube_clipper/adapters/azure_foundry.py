@@ -8,7 +8,7 @@ import httpx
 from youtube_clipper.config import AzureSummarizerSettings
 from youtube_clipper.logging import get_logger
 
-from .base import SYSTEM_PROMPT, SummaryResult, build_user_prompt
+from .base import DetailLevel, SummaryResult, build_system_prompt, build_user_prompt
 
 log = get_logger(__name__)
 
@@ -25,7 +25,13 @@ class AzureFoundryAdapter:
         self.name = f"azure-foundry/{cfg.model}"
         self._client = client
 
-    async def summarize(self, transcript: str, *, language: str) -> SummaryResult:
+    async def summarize(
+        self,
+        transcript: str,
+        *,
+        language: str,
+        detail: DetailLevel = "standard",
+    ) -> SummaryResult:
         url = (
             f"{self.cfg.endpoint.rstrip('/')}"
             f"/openai/deployments/{self.cfg.model}"
@@ -34,7 +40,7 @@ class AzureFoundryAdapter:
         headers = {"api-key": self.cfg.api_key, "Content-Type": "application/json"}
         body = {
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": build_system_prompt(detail)},
                 {"role": "user", "content": build_user_prompt(transcript, language)},
             ],
             "temperature": 0.2,
@@ -57,6 +63,7 @@ class AzureFoundryAdapter:
             return SummaryResult(
                 tldr=parsed["tldr"],
                 bullets=parsed["bullets"],
+                notable_quotes=parsed.get("notable_quotes", []),
                 tags=parsed.get("tags", []),
                 backend=self.name,
                 raw_response=data,

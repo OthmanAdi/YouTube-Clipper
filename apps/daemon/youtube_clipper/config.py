@@ -13,6 +13,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "config.toml"
 ENV_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
+# Path keys in [paths] that should resolve relative to the repo root when given as a
+# relative path. Absolute paths are honored as-is.
+_REPO_REL_PATH_KEYS = {"output_dir", "logs_dir"}
+
 
 class PathsSettings(BaseModel):
     output_dir: Path
@@ -96,10 +100,30 @@ def _walk_and_interp(obj):
     return obj
 
 
+def _resolve_paths_section(raw: dict) -> dict:
+    """Resolve relative output_dir/logs_dir entries relative to REPO_ROOT.
+
+    Lets the same config.toml work on any developer's machine without absolute paths.
+    Absolute paths (e.g. "C:/Users/foo/clips" or "/home/foo/clips") are kept as-is.
+    """
+    paths = raw.get("paths")
+    if not isinstance(paths, dict):
+        return raw
+    for key in _REPO_REL_PATH_KEYS:
+        v = paths.get(key)
+        if isinstance(v, str) and v:
+            p = Path(v).expanduser()
+            if not p.is_absolute():
+                paths[key] = str((REPO_ROOT / p).resolve())
+    raw["paths"] = paths
+    return raw
+
+
 def load_settings(path: Path | None = None) -> AppSettings:
     p = path or Path(os.environ.get("YTCLIPPER_CONFIG", str(DEFAULT_CONFIG_PATH)))
     if not p.exists():
         raise FileNotFoundError(f"config not found: {p}")
     raw = tomllib.loads(p.read_text(encoding="utf-8"))
     interpolated = _walk_and_interp(raw)
+    interpolated = _resolve_paths_section(interpolated)
     return AppSettings.model_validate(interpolated)

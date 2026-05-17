@@ -40,9 +40,10 @@ async def summarize(job: Job, ctx: PipelineContext) -> Job:
 
     result = None
     last_err: Exception | None = None
+    detail = getattr(job.input, "detail", "standard") or "standard"
     for attempt in range(1, max_attempts + 1):
         try:
-            result = await adapter.summarize(full_text, language=language)
+            result = await adapter.summarize(full_text, language=language, detail=detail)
             last_err = None
             break
         except Exception as ex:
@@ -60,6 +61,7 @@ async def summarize(job: Job, ctx: PipelineContext) -> Job:
     job.summary = SummaryArtifact(
         tldr=result.tldr,
         bullets=result.bullets,
+        notable_quotes=result.notable_quotes,
         tags=result.tags,
         backend=result.backend,
     )

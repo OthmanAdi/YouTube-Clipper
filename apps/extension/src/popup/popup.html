@@ -14,7 +14,7 @@
 
       <section id="empty-state" hidden>
         <p>Hold <kbd>Alt</kbd> and drag across the YouTube seekbar to mark a range.</p>
-        <p class="hint">Pink overlay shows the range as you drag. Release to lock it.</p>
+        <p class="hint">Pink overlay shows as you drag. Release to lock the range, then click the toolbar icon.</p>
       </section>
 
       <section id="pending-card" class="card pending" hidden>
@@ -24,10 +24,26 @@
         <div class="row">
           <label for="summarizer-select">Summarizer</label>
           <select id="summarizer-select">
-            <option value="azure">Azure Foundry</option>
             <option value="ollama">Ollama (local)</option>
+            <option value="azure">Azure Foundry</option>
           </select>
         </div>
+        <div class="row">
+          <label for="detail-select">Detail</label>
+          <select id="detail-select" title="How thorough the AI summary should be">
+            <option value="quick">Quick (3-5 bullets, terse)</option>
+            <option value="standard">Standard (5-8 bullets, balanced)</option>
+            <option value="deep">Deep (8-12 bullets, thorough)</option>
+          </select>
+        </div>
+        <details id="advanced-details">
+          <summary>Advanced</summary>
+          <div class="row">
+            <label for="output-dir-input">Output folder</label>
+            <input id="output-dir-input" type="text" placeholder="(default)" />
+          </div>
+          <p class="hint">Absolute path. Leave blank to use the default from config.toml. Saved for next time.</p>
+        </details>
         <div class="actions">
           <button id="extract-btn" class="primary">Extract</button>
           <button id="dismiss-pending-btn">Dismiss</button>
@@ -35,7 +51,10 @@
       </section>
 
       <section id="jobs-section" hidden>
-        <h2 class="section-title">Recent clips <span class="count" id="jobs-count"></span></h2>
+        <div class="section-head">
+          <h2 class="section-title">Recent clips <span class="count" id="jobs-count"></span></h2>
+          <button id="clear-done-btn" class="ghost" hidden>Clear finished</button>
+        </div>
         <div id="jobs-list"></div>
       </section>
     </main>

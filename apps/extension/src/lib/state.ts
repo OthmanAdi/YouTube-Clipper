@@ -12,6 +12,8 @@ export interface PendingSelection {
 
 export type JobState = "queued" | "running" | "done" | "failed";
 
+export type DetailLevel = "quick" | "standard" | "deep";
+
 export interface JobView {
   job_id: string;
   clip_id: string;
@@ -19,17 +21,44 @@ export interface JobView {
   start_s: number;
   end_s: number;
   summarizer: "azure" | "ollama";
+  detail: DetailLevel;
   video_title: string | null;
   channel_name: string | null;
+  output_dir_override: string | null;
   created_at: number;
   state: JobState;
   current_stage: string | null;
   stages_done: string[];
   last_log: string;
   note_path: string | null;
+  website_path: string | null;
   error_stage: string | null;
   error_message: string | null;
   durations_ms: Record<string, number>;
+}
+
+export interface UiPrefs {
+  output_dir_override: string | null;
+  default_summarizer: "azure" | "ollama";
+  default_detail: DetailLevel;
+}
+
+const DEFAULT_PREFS: UiPrefs = {
+  output_dir_override: null,
+  default_summarizer: "ollama",
+  default_detail: "standard",
+};
+
+export async function getPrefs(): Promise<UiPrefs> {
+  const got = await chrome.storage.local.get(["ui_prefs"]);
+  return { ...DEFAULT_PREFS, ...(got.ui_prefs as Partial<UiPrefs> | undefined) };
+}
+
+export async function setPrefs(patch: Partial<UiPrefs>): Promise<UiPrefs> {
+  const current = await getPrefs();
+  const merged = { ...current, ...patch };
+  await chrome.storage.local.set({ ui_prefs: merged });
+  return merged;
 }
 
 interface StateShape {
