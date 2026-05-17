@@ -38,3 +38,15 @@ models/
 !apps/daemon/uv.lock
 !apps/extension/package-lock.json
 bash.exe.stackdump
+
+# Local AI agent files (project-specific Claude instructions, agent scratchpads)
+CLAUDE.md
+.claude/
+AGENTS.md
+GEMINI.md
+.cursor/
+
+# Local note-taking on the project itself (not user clip output)
+NOTES.md
+TODO.md
+.notes/
