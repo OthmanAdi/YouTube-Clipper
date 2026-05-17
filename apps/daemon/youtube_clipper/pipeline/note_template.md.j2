@@ -1,0 +1,48 @@
+---
+clip_id: {{ clip_id }}
+created: {{ created_iso }}
+youtube:
+  url: {{ url_with_t }}
+  channel: {{ channel | default('Unknown', true) }}
+  channel_id: {{ channel_id | default('', true) }}
+  title: "{{ (title | default('Untitled', true)) | replace('"', '\\"') }}"
+  duration_full_s: {{ duration_full_s | default(0) }}
+range:
+  start_s: {{ start_s }}
+  end_s: {{ end_s }}
+  length_s: {{ length_s }}
+pipeline:
+  whisper_model: {{ whisper_model }}
+  whisper_lang: {{ whisper_lang }}
+  summarizer: {{ summarizer }}
+  duration_total_ms: {{ duration_total_ms }}
+  duration_per_stage_ms:
+{% for stage, ms in durations_per_stage.items() %}    {{ stage }}: {{ ms }}
+{% endfor %}tags: [{{ tags | join(', ') }}]
+---
+
+# {{ title | default('Untitled') }} — {{ start_mmss }} → {{ end_mmss }}
+
+> [Watch on YouTube at {{ start_mmss }}]({{ url_with_t }})
+
+Audio: `audio.mp3` ({{ length_s }}s, {{ audio_mb }} MB)
+
+## TL;DR
+{{ tldr }}
+
+## Key Points
+{% for b in bullets %}- {{ b }}
+{% endfor %}
+## Verbatim Transcript
+<details><summary>Show full transcript</summary>
+
+```
+{{ transcript_block }}
+```
+
+</details>
+
+Job log: [raw.log](raw.log) · Summarized by: {{ summarizer }}
+
+## My Notes
+<!-- Sacrosanct. Re-runs never overwrite anything in or below this section. -->
