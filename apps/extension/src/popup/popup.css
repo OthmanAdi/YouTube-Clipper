@@ -146,3 +146,8 @@ kbd {
   font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
   font-size: 12px;
 }
+.hint {
+  opacity: 0.55;
+  font-size: 11px;
+  margin-top: 6px;
+}

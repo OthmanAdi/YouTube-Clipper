@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "YouTube Clipper",
   "version": "0.1.0",
-  "description": "Ctrl+drag on the YouTube seekbar to extract verbatim audio + transcript + AI summary.",
+  "description": "Alt+drag on the YouTube seekbar to extract verbatim audio + transcript + AI summary.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": [
     "*://*.youtube.com/*",

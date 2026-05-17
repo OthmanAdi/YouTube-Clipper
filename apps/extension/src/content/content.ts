@@ -117,7 +117,8 @@ function updateTooltip(clientX: number, clientY: number) {
 }
 
 function onMouseDown(ev: MouseEvent) {
-  if (!ev.ctrlKey) return;
+  // Alt+drag — YouTube reserves Ctrl for its own seekbar shortcuts (frame-step / chapter jump).
+  if (!ev.altKey) return;
   const bar = getProgressBarEl();
   const video = getVideoEl();
   if (!bar || !video || !isFinite(video.duration)) return;
