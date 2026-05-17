@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Clipper",
+  "version": "0.1.0",
+  "description": "Ctrl+drag on the YouTube seekbar to extract verbatim audio + transcript + AI summary.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "http://127.0.0.1:7777/*",
+    "ws://127.0.0.1:7777/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "YouTube Clipper",
+    "default_icon": "icons/icon128.svg"
+  },
+  "background": {
+    "service_worker": "background/sw.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/content.css"],
+      "matches": ["*://*.youtube.com/*"]
+    }
+  ],
+  "icons": {
+    "128": "icons/icon128.svg"
+  }
+}

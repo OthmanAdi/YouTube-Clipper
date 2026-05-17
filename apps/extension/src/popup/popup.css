@@ -1,0 +1,148 @@
+:root {
+  color-scheme: dark;
+}
+body {
+  width: 360px;
+  margin: 0;
+  font: 13px/1.45 system-ui, sans-serif;
+  background: #161616;
+  color: #eaeaea;
+}
+main {
+  padding: 12px;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+header h1 {
+  font-size: 14px;
+  margin: 0;
+  flex: 1;
+  letter-spacing: 0.2px;
+}
+.chip {
+  font-size: 16px;
+  cursor: default;
+}
+.chip.ok {
+  color: #44d17a;
+}
+.chip.bad {
+  color: #ff5d5d;
+}
+.chip.dim {
+  color: #777;
+}
+.meta .title {
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+}
+.meta .channel {
+  opacity: 0.7;
+  font-size: 12px;
+  margin-top: 2px;
+}
+.meta .range {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  margin-top: 8px;
+  color: #ff5b9c;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+.row label {
+  width: 96px;
+  opacity: 0.85;
+}
+.row select {
+  flex: 1;
+  background: #222;
+  color: #eee;
+  border: 1px solid #333;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font: inherit;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+button {
+  background: #2a2a2a;
+  color: #eee;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font: inherit;
+}
+button.primary {
+  background: #ff1864;
+  border-color: #ff1864;
+  color: white;
+  font-weight: 600;
+}
+button:hover {
+  filter: brightness(1.12);
+}
+.progress {
+  background: #222;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+#r-bar {
+  background: #ff1864;
+  height: 100%;
+  width: 0%;
+  transition: width 0.25s ease;
+}
+.last-log {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.72;
+  word-break: break-all;
+}
+.ok {
+  color: #44d17a;
+  font-size: 16px;
+  font-weight: 600;
+}
+.bad {
+  color: #ff5d5d;
+  font-size: 16px;
+  font-weight: 600;
+}
+.err {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 12px;
+  margin-top: 6px;
+  word-break: break-all;
+}
+.note-path {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.75;
+  margin-top: 6px;
+  word-break: break-all;
+}
+.stage-line {
+  font-weight: 600;
+}
+kbd {
+  background: #333;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 12px;
+}

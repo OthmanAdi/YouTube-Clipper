@@ -1,0 +1,17 @@
+{
+  "name": "youtube-clipper-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome MV3 extension for the YouTube-Clipper pipeline. Built with TypeScript + a tiny Node script — no bundler.",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "clean": "node scripts/clean.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3",
+    "@types/chrome": "0.0.293",
+    "@types/node": "22.7.5"
+  }
+}
