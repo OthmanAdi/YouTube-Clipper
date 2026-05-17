@@ -37,3 +37,4 @@ models/
 # Lock files (committed selectively below — keep uv.lock + package-lock.json)
 !apps/daemon/uv.lock
 !apps/extension/package-lock.json
+bash.exe.stackdump

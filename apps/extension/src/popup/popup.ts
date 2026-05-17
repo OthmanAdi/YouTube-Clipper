@@ -1,70 +1,206 @@
-// Popup controller: health probe + state machine + live WS event handler.
+// Popup: reads state from chrome.storage.session, re-renders on every change.
+// All persistence lives in SW + storage — the popup is pure view.
 
 import { getHealth } from "../lib/api.js";
 import { mmss, lengthLabel } from "../lib/format.js";
+import {
+  type JobView,
+  type PendingSelection,
+  getPending,
+  getJobs,
+  onChange,
+} from "../lib/state.js";
 
-type Section = "empty" | "pending" | "running" | "done" | "failed";
-
-const STAGE_ORDER = [
-  "resolve",
-  "download",
-  "normalize",
-  "transcribe",
-  "summarize",
-  "write_note",
-];
-
-function show(sec: Section) {
-  for (const id of ["empty", "pending", "running", "done", "failed"]) {
-    const el = document.getElementById(`${id}-state`);
-    if (el) el.hidden = id !== sec;
-  }
-}
+const STAGE_ORDER = ["resolve", "download", "normalize", "transcribe", "summarize", "write_note"];
 
 function q<T extends HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
 }
 
-function setProgressByStage(stage: string) {
-  const idx = STAGE_ORDER.indexOf(stage);
-  const pct = idx >= 0 ? ((idx + 1) / STAGE_ORDER.length) * 100 : 0;
-  q<HTMLDivElement>("r-bar").style.width = `${pct}%`;
-  q("r-stage").textContent = `Stage ${idx + 1}/6 · ${stage}`;
+function show(id: string, visible: boolean) {
+  const el = document.getElementById(id);
+  if (el) el.hidden = !visible;
 }
 
-function fillPending(p: any) {
-  q("m-title").textContent = p?.video_title || "(untitled)";
-  q("m-channel").textContent = p?.channel_name || "";
-  q("m-range").textContent =
-    p && typeof p.start_s === "number"
-      ? `${mmss(p.start_s)} → ${mmss(p.end_s)}  (${lengthLabel(p.end_s - p.start_s)})`
-      : "";
+function setText(id: string, text: string) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text;
 }
 
-function handleEvent(ev: any) {
-  if (!ev) return;
-  if (ev.type === "stage_start") {
-    show("running");
-    setProgressByStage(ev.stage);
-  } else if (ev.type === "stage_done") {
-    setProgressByStage(ev.stage);
-    q("r-last").textContent = `${ev.stage} done in ${ev.duration_ms}ms`;
-  } else if (ev.type === "done") {
-    show("done");
-    q("d-path").textContent = ev.note || "";
-  } else if (ev.type === "failed") {
-    show("failed");
-    q("f-msg").textContent = `${ev.stage}: ${ev.error_message || ev.error_class}`;
-  } else if (ev.type === "progress") {
-    q("r-last").textContent = ev.message || "";
-  } else if (ev.type === "enqueued" || ev.type === "running") {
-    show("running");
-    q("r-stage").textContent = "Queued…";
+function stageIndex(stage: string | null): number {
+  if (!stage) return -1;
+  return STAGE_ORDER.indexOf(stage);
+}
+
+function progressPercent(job: JobView): number {
+  if (job.state === "done") return 100;
+  if (job.state === "failed") {
+    const idx = stageIndex(job.error_stage);
+    return idx >= 0 ? ((idx + 1) / STAGE_ORDER.length) * 100 : 0;
+  }
+  const doneCount = job.stages_done.length;
+  if (doneCount === STAGE_ORDER.length) return 100;
+  // While running a stage that is not yet in stages_done, show "completed + half of current".
+  const inFlight = job.current_stage && !job.stages_done.includes(job.current_stage) ? 0.5 : 0;
+  return ((doneCount + inFlight) / STAGE_ORDER.length) * 100;
+}
+
+function iconFor(job: JobView): string {
+  switch (job.state) {
+    case "queued":
+      return "⏳";
+    case "running":
+      return "⚙";
+    case "done":
+      return "✓";
+    case "failed":
+      return "⚠";
   }
 }
 
-async function init() {
-  // Health probe
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    /* ignore */
+  }
+}
+
+function buildJobRow(job: JobView): HTMLElement {
+  const tpl = document.getElementById("job-row-tpl") as HTMLTemplateElement;
+  const node = tpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
+  node.dataset.jobId = job.job_id;
+
+  const icon = node.querySelector(".job-icon")!;
+  icon.textContent = iconFor(job);
+  icon.classList.add(job.state);
+
+  const title = node.querySelector(".job-title")!;
+  title.textContent = job.video_title || "(untitled)";
+
+  const sub = node.querySelector(".job-sub")!;
+  const range = `${mmss(job.start_s)} → ${mmss(job.end_s)} · ${lengthLabel(job.end_s - job.start_s)}`;
+  const stageLabel =
+    job.state === "done"
+      ? "done"
+      : job.state === "failed"
+        ? `failed at ${job.error_stage ?? "?"}`
+        : job.current_stage
+          ? `${job.current_stage} (${stageIndex(job.current_stage) + 1}/${STAGE_ORDER.length})`
+          : "queued";
+  sub.textContent = `${range} · ${stageLabel} · ${job.summarizer}`;
+
+  const bar = node.querySelector(".job-bar") as HTMLElement;
+  bar.style.width = `${progressPercent(job)}%`;
+  if (job.state === "done") bar.classList.add("done");
+  if (job.state === "failed") bar.classList.add("failed");
+
+  const logEl = node.querySelector(".job-log")!;
+  logEl.textContent = job.last_log || "";
+
+  // Stages pill row
+  const stagesWrap = node.querySelector(".job-stages") as HTMLElement;
+  stagesWrap.innerHTML = "";
+  for (const s of STAGE_ORDER) {
+    const pill = document.createElement("span");
+    pill.className = "stage-pill";
+    if (job.stages_done.includes(s)) pill.classList.add("done");
+    else if (s === job.current_stage && job.state === "running") pill.classList.add("running");
+    else if (s === job.error_stage && job.state === "failed") pill.classList.add("failed");
+    const dur = job.durations_ms[s];
+    pill.textContent = dur ? `${s} ${dur}ms` : s;
+    stagesWrap.appendChild(pill);
+  }
+
+  // Actions
+  const actions = node.querySelector(".job-actions") as HTMLElement;
+  actions.innerHTML = "";
+  if (job.note_path) {
+    const pathEl = document.createElement("div");
+    pathEl.className = "path-text";
+    pathEl.textContent = job.note_path;
+    actions.parentElement!.insertBefore(pathEl, actions);
+    const copyNote = document.createElement("button");
+    copyNote.textContent = "Copy note path";
+    copyNote.onclick = () => copyText(job.note_path || "");
+    actions.appendChild(copyNote);
+    const copyFolder = document.createElement("button");
+    copyFolder.textContent = "Copy folder";
+    copyFolder.onclick = () => {
+      const folder = (job.note_path || "").replace(/[\\/][^\\/]+$/, "");
+      copyText(folder);
+    };
+    actions.appendChild(copyFolder);
+  }
+  if (job.state === "failed" && job.error_message) {
+    const errEl = document.createElement("div");
+    errEl.className = "error-text";
+    errEl.textContent = `${job.error_stage}: ${job.error_message}`;
+    actions.parentElement!.insertBefore(errEl, actions);
+  }
+  const dismiss = document.createElement("button");
+  dismiss.textContent = "Dismiss";
+  dismiss.onclick = async () => {
+    await chrome.runtime.sendMessage({ type: "popup.dismiss_job", job_id: job.job_id });
+  };
+  actions.appendChild(dismiss);
+
+  // Toggle expansion
+  const toggle = node.querySelector(".job-toggle") as HTMLButtonElement;
+  const details = node.querySelector(".job-details") as HTMLElement;
+  // Default expanded if running, failed, or done (so user sees full info).
+  details.hidden = job.state === "queued";
+  if (!details.hidden) toggle.classList.add("open");
+  toggle.onclick = () => {
+    details.hidden = !details.hidden;
+    toggle.classList.toggle("open", !details.hidden);
+  };
+
+  return node;
+}
+
+function renderPending(pending: PendingSelection | null) {
+  if (!pending) {
+    show("pending-card", false);
+    return;
+  }
+  show("pending-card", true);
+  setText("p-title", pending.video_title || "(untitled)");
+  setText("p-channel", pending.channel_name || "");
+  setText(
+    "p-range",
+    `${mmss(pending.start_s)} → ${mmss(pending.end_s)}  (${lengthLabel(pending.end_s - pending.start_s)})`
+  );
+}
+
+function renderJobs(jobs: JobView[]) {
+  const list = q("jobs-list");
+  if (jobs.length === 0) {
+    show("jobs-section", false);
+    list.innerHTML = "";
+    return;
+  }
+  show("jobs-section", true);
+  setText("jobs-count", `(${jobs.length})`);
+  list.innerHTML = "";
+  for (const job of jobs) {
+    list.appendChild(buildJobRow(job));
+  }
+}
+
+function renderEmptyState(pending: PendingSelection | null, jobs: JobView[]) {
+  const empty = !pending && jobs.length === 0;
+  show("empty-state", empty);
+}
+
+async function render() {
+  const [pending, jobs] = await Promise.all([getPending(), getJobs()]);
+  renderPending(pending);
+  renderJobs(jobs);
+  renderEmptyState(pending, jobs);
+}
+
+async function wireHealthChip() {
   const chip = q("health-chip");
   try {
     await getHealth();
@@ -76,82 +212,42 @@ async function init() {
     chip.classList.add("bad");
     chip.title = "Daemon not running — run scripts\\start-daemon.ps1";
   }
-
-  const state = await chrome.runtime.sendMessage({ type: "popup.get_state" });
-
-  if (state?.lastEvent?.type === "done") {
-    show("done");
-    q("d-path").textContent = state.lastEvent.note || "";
-  } else if (state?.lastEvent?.type === "failed") {
-    show("failed");
-    q("f-msg").textContent = `${state.lastEvent.stage}: ${state.lastEvent.error_message}`;
-  } else if (
-    state?.currentJobId &&
-    state?.lastEvent &&
-    state.lastEvent.type !== "done" &&
-    state.lastEvent.type !== "failed"
-  ) {
-    show("running");
-    handleEvent(state.lastEvent);
-  } else if (state?.pending) {
-    show("pending");
-    fillPending(state.pending);
-  } else {
-    show("empty");
-  }
-
-  q("extract-btn")?.addEventListener("click", onExtract);
-  q("cancel-btn")?.addEventListener("click", onCancel);
-  q("reset")?.addEventListener("click", onReset);
-  q("failed-reset")?.addEventListener("click", onReset);
-  q("open-note")?.addEventListener("click", () => copyPath(q("d-path").textContent || ""));
-  q("open-folder")?.addEventListener("click", () => {
-    const p = q("d-path").textContent || "";
-    if (!p) return;
-    const folder = p.replace(/[\\/][^\\/]+$/, "");
-    copyPath(folder);
-  });
-
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type === "popup.event") handleEvent(msg.event);
-  });
 }
 
-async function copyPath(p: string) {
-  if (!p) return;
-  try {
-    await navigator.clipboard.writeText(p);
-    const r = q("r-last");
-    if (r) r.textContent = `Copied: ${p}`;
-  } catch {
-    /* clipboard write can fail in some contexts; we just ignore */
-  }
-}
-
-async function onExtract() {
+async function onExtractClicked() {
   const summarizer = (q<HTMLSelectElement>("summarizer-select")).value;
-  show("running");
-  q("r-stage").textContent = "Queued…";
-  q("r-last").textContent = "Sending to daemon…";
-  const resp = await chrome.runtime.sendMessage({ type: "popup.extract", summarizer });
-  if (!resp?.ok) {
-    show("failed");
-    q("f-msg").textContent = resp?.error || "Unknown error";
+  const r = await chrome.runtime.sendMessage({ type: "popup.extract", summarizer });
+  if (!r?.ok) {
+    alert(`Extract failed: ${r?.error || "unknown"}`);
   }
+  await render();
 }
 
-async function onCancel() {
-  await chrome.runtime.sendMessage({ type: "popup.cancel" });
-  show("empty");
+async function onDismissPending() {
+  await chrome.runtime.sendMessage({ type: "popup.dismiss_pending" });
 }
 
-async function onReset() {
-  await chrome.runtime.sendMessage({ type: "popup.reset" });
-  show("empty");
+async function init() {
+  await wireHealthChip();
+  // Ask SW to re-attach any in-flight WSs that might have been lost on eviction.
+  try {
+    await chrome.runtime.sendMessage({ type: "popup.rehydrate" });
+  } catch {
+    /* SW may be cold-booting; render anyway */
+  }
+  await render();
+
+  q("extract-btn")?.addEventListener("click", () => void onExtractClicked());
+  q("dismiss-pending-btn")?.addEventListener("click", () => void onDismissPending());
+
+  // Live updates: whenever the SW updates the storage, re-render the whole popup.
+  onChange(() => void render());
+
+  // Re-check daemon health every 3s while the popup is open.
+  setInterval(() => void wireHealthChip(), 3000);
 }
 
 init().catch((e) => {
-  show("failed");
-  const el = q("f-msg");
-  if (el) el.textContent = String(e?.message ?? e);
+  console.error(e);
+  alert(String(e?.message ?? e));
 });

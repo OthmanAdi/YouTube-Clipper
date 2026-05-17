@@ -14,17 +14,29 @@ async def test_download_invokes_yt_dlp_with_range(make_job, fake_ctx):
 
     async def fake_run(args, *, timeout_s=None, **kw):
         captured["args"] = args
-        (job.paths.job_dir / "audio.raw.mp3").write_bytes(b"FAKE")
+        captured["timeout_s"] = timeout_s
+        # yt-dlp picks the container; pretend it landed as .m4a
+        (job.paths.job_dir / "audio.raw.m4a").write_bytes(b"FAKE")
         return CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
     with patch("youtube_clipper.pipeline.stage_02_download.run", new=fake_run):
         out = await download(job, fake_ctx)
 
+    # Range passed correctly:
     assert "--download-sections" in captured["args"]
     idx = captured["args"].index("--download-sections")
     assert captured["args"][idx + 1] == "*23.00-47.50"
+    # audio-only format requested:
+    assert "-f" in captured["args"]
+    assert captured["args"][captured["args"].index("-f") + 1] == "bestaudio"
+    # NO force-keyframes and NO extract-audio — those were the stalling combo.
+    assert "--force-keyframes-at-cuts" not in captured["args"]
+    assert "--extract-audio" not in captured["args"]
+    # Per-attempt timeout enforced:
+    assert captured["timeout_s"] is not None and captured["timeout_s"] <= 120.0
     assert out.paths.audio_raw is not None
     assert out.paths.audio_raw.exists()
+    assert out.paths.audio_raw.suffix == ".m4a"
     assert Stage.DOWNLOAD in out.durations_ms
 
 

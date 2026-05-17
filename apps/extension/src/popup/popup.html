@@ -13,20 +13,14 @@
       </header>
 
       <section id="empty-state" hidden>
-        <p>
-          Hold <kbd>Alt</kbd> and drag across the YouTube seekbar to mark a range.
-        </p>
-        <p class="hint">
-          (Ctrl was conflicting with YouTube's own seekbar shortcuts, so Alt is the trigger.)
-        </p>
+        <p>Hold <kbd>Alt</kbd> and drag across the YouTube seekbar to mark a range.</p>
+        <p class="hint">Pink overlay shows the range as you drag. Release to lock it.</p>
       </section>
 
-      <section id="pending-state" hidden>
-        <div class="meta">
-          <div class="title" id="m-title">Title</div>
-          <div class="channel" id="m-channel">Channel</div>
-          <div class="range" id="m-range">0:00 → 0:00 (0s)</div>
-        </div>
+      <section id="pending-card" class="card pending" hidden>
+        <div class="card-title" id="p-title">Title</div>
+        <div class="card-channel" id="p-channel"></div>
+        <div class="card-range" id="p-range">0:00 → 0:00 (0s)</div>
         <div class="row">
           <label for="summarizer-select">Summarizer</label>
           <select id="summarizer-select">
@@ -36,34 +30,33 @@
         </div>
         <div class="actions">
           <button id="extract-btn" class="primary">Extract</button>
-          <button id="cancel-btn">Cancel</button>
+          <button id="dismiss-pending-btn">Dismiss</button>
         </div>
       </section>
 
-      <section id="running-state" hidden>
-        <div class="stage-line"><span id="r-stage">Stage</span></div>
-        <div class="progress"><div id="r-bar"></div></div>
-        <div class="last-log" id="r-last">…</div>
-      </section>
-
-      <section id="done-state" hidden>
-        <div class="ok">✓ Done</div>
-        <div class="note-path" id="d-path"></div>
-        <div class="actions">
-          <button id="open-note">Copy note path</button>
-          <button id="open-folder">Copy folder path</button>
-          <button id="reset">New clip</button>
-        </div>
-      </section>
-
-      <section id="failed-state" hidden>
-        <div class="bad">⚠ Failed</div>
-        <div class="err" id="f-msg"></div>
-        <div class="actions">
-          <button id="failed-reset">Dismiss</button>
-        </div>
+      <section id="jobs-section" hidden>
+        <h2 class="section-title">Recent clips <span class="count" id="jobs-count"></span></h2>
+        <div id="jobs-list"></div>
       </section>
     </main>
+    <template id="job-row-tpl">
+      <div class="card job">
+        <div class="job-head">
+          <span class="job-icon"></span>
+          <div class="job-meta">
+            <div class="job-title"></div>
+            <div class="job-sub"></div>
+          </div>
+          <button class="job-toggle" title="Expand">▾</button>
+        </div>
+        <div class="job-progress"><div class="job-bar"></div></div>
+        <div class="job-log"></div>
+        <div class="job-details" hidden>
+          <div class="job-stages"></div>
+          <div class="job-actions"></div>
+        </div>
+      </div>
+    </template>
     <script type="module" src="popup/popup.js"></script>
   </body>
 </html>
