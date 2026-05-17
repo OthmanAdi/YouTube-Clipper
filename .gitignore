@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+
+# User data (clip outputs and logs are user-private)
+output/
+logs/
+config/.secrets.env
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Whisper model cache (downloaded on first run, ~3 GB)
+.cache/
+models/
+
+# Lock files (committed selectively below — keep uv.lock + package-lock.json)
+!apps/daemon/uv.lock
+!apps/extension/package-lock.json
