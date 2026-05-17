@@ -33,8 +33,10 @@ api_key  = "${AZURE_FOUNDRY_KEY}"
 
 [summarizer.ollama]
 enabled  = true
-endpoint = "http://localhost:11434"
-model    = "qwen2.5:14b"
+# Important: Ollama only binds IPv4 by default. Use 127.0.0.1, not localhost (PS resolves localhost to ::1).
+endpoint = "http://127.0.0.1:11434"
+# hermes3:8b is what you already have pulled. To swap, `ollama pull <model>` then change here.
+model    = "hermes3:8b"
 
 [retry]
 download_max_attempts  = 4

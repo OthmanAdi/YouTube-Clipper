@@ -41,11 +41,13 @@ Probe "daemon /health"      {
 }
 Probe "ollama reachable"    {
     try {
-        $r = Invoke-WebRequest -UseBasicParsing "http://localhost:11434/api/version" -TimeoutSec 2
+        # 127.0.0.1 explicitly — PowerShell resolves 'localhost' to ::1 first on Windows
+        # and Ollama by default only binds IPv4.
+        $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:11434/api/version" -TimeoutSec 3
         if ($r.StatusCode -ne 200) { throw "status $($r.StatusCode)" }
         $r.Content
     } catch {
-        throw "ollama not reachable (only needed if you'll use the Ollama summarizer)"
+        throw "ollama not reachable on 127.0.0.1:11434 (only needed if you'll use the Ollama summarizer)"
     }
 }
 
