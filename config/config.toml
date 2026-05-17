@@ -1,0 +1,46 @@
+# YouTube-Clipper main config.
+# Secrets come from config/.secrets.env (loaded by start-daemon.ps1).
+
+[paths]
+# Adjust if your output should live elsewhere.
+output_dir = "C:/Users/oasrvadmin/Documents/YouTube-Clipper/output"
+logs_dir   = "C:/Users/oasrvadmin/Documents/YouTube-Clipper/logs"
+
+# These can be just "ffmpeg" / "yt-dlp" if on PATH.
+ffmpeg_bin = "ffmpeg"
+yt_dlp_bin = "yt-dlp"
+
+[daemon]
+host = "127.0.0.1"
+port = 7777
+
+[whisper]
+# Use "large-v3" for best quality (downloaded on first run, ~3 GB).
+# Use "small" or "base" for faster local testing.
+model        = "large-v3"
+# "cuda" requires NVIDIA + CUDA; falls back to int8 + CPU automatically on OOM.
+device       = "cuda"
+compute_type = "float16"
+vad_filter   = true
+beam_size    = 5
+language     = "auto"
+
+[summarizer.azure]
+enabled  = true
+endpoint = "${AZURE_FOUNDRY_ENDPOINT}"
+model    = "gpt-4o-mini"
+api_key  = "${AZURE_FOUNDRY_KEY}"
+
+[summarizer.ollama]
+enabled  = true
+endpoint = "http://localhost:11434"
+model    = "qwen2.5:14b"
+
+[retry]
+download_max_attempts  = 4
+summarize_max_attempts = 3
+
+[ux]
+pause_video_on_drag = false
+min_range_seconds   = 2
+max_range_seconds   = 1200
