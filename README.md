@@ -1,5 +1,9 @@
 # YouTube-Clipper
 
+<p align="center">
+  <img src="media/banner-popup.png" alt="YouTube Clipper popup — multi-job dashboard with stage progress, action buttons, and the Generate Website + Custom Design (Claude prompt) shortcuts" width="420">
+</p>
+
 > Hear a great moment in YouTube. Alt+drag the seekbar. Get verbatim audio,
 > a Whisper transcript, AI-written summary + bullets + notable quotes, and a
 > shareable web page. All local, all in one folder, in under a minute.

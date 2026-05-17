@@ -12,6 +12,7 @@ Design notes:
 """
 from __future__ import annotations
 
+import asyncio
 import time
 
 from youtube_clipper.logging import bind_stage, get_logger
@@ -22,7 +23,16 @@ from .context import PipelineContext
 
 log = get_logger(__name__)
 
-PER_ATTEMPT_TIMEOUT_S = 90.0
+# Per-attempt timeout is range-aware. Empirically yt-dlp downloads HLS audio at a few MB/s
+# but with handshake + segment fetch overhead. Floor of 90s for short clips; otherwise
+# scale to clip length + overhead so long ranges have room to finish a single attempt.
+TIMEOUT_FLOOR_S = 90.0
+TIMEOUT_PER_RANGE_SECOND = 0.5
+TIMEOUT_OVERHEAD_S = 30.0
+
+
+def _compute_timeout(range_s: float) -> float:
+    return max(TIMEOUT_FLOOR_S, TIMEOUT_OVERHEAD_S + range_s * TIMEOUT_PER_RANGE_SECOND)
 
 
 def _fmt_time(seconds: float) -> str:
@@ -36,6 +46,7 @@ async def download(job: Job, ctx: PipelineContext) -> Job:
     e = job.input.end_s
     section = f"*{_fmt_time(s)}-{_fmt_time(e)}"
     out_template = str(job.paths.job_dir / "audio.raw.%(ext)s")
+    timeout_s = _compute_timeout(e - s)
 
     args = [
         str(ctx.settings.paths.yt_dlp_bin),
@@ -47,17 +58,26 @@ async def download(job: Job, ctx: PipelineContext) -> Job:
         "-o", out_template,
         job.input.url,
     ]
-    log.info("download.start", section=section, url=job.input.url)
+    log.info(
+        "download.start",
+        section=section,
+        url=job.input.url,
+        per_attempt_timeout_s=timeout_s,
+    )
 
     last_err: str | None = None
     last_returncode: int | None = None
     for attempt in range(1, ctx.settings.retry.download_max_attempts + 1):
-        await ctx.progress(Stage.DOWNLOAD, 0.0, f"yt-dlp attempt {attempt}/{ctx.settings.retry.download_max_attempts}")
+        await ctx.progress(
+            Stage.DOWNLOAD,
+            0.0,
+            f"yt-dlp attempt {attempt}/{ctx.settings.retry.download_max_attempts} (timeout {int(timeout_s)}s)",
+        )
         try:
-            res = await run(args, timeout_s=PER_ATTEMPT_TIMEOUT_S)
-        except TimeoutError:
-            last_err = f"yt-dlp timeout after {PER_ATTEMPT_TIMEOUT_S}s"
-            log.warning("download.timeout", attempt=attempt, timeout_s=PER_ATTEMPT_TIMEOUT_S)
+            res = await run(args, timeout_s=timeout_s)
+        except (TimeoutError, asyncio.TimeoutError) as ex:
+            last_err = f"yt-dlp timeout after {int(timeout_s)}s"
+            log.warning("download.timeout", attempt=attempt, timeout_s=timeout_s, exc=str(ex))
             continue
         if res.ok:
             last_err = None
