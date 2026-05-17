@@ -34,6 +34,29 @@ export async function getHealth(): Promise<unknown> {
   return resp.json();
 }
 
+export interface DaemonJobView {
+  job_id: string;
+  clip_id: string;
+  state: string;
+  current_stage: string | null;
+  stages_done: string[];
+  failed_at_stage: string | null;
+  error_class: string | null;
+  error_message: string | null;
+  durations_ms: Record<string, number>;
+  summarizer_used: string | null;
+  paths: {
+    note: string | null;
+  };
+}
+
+export async function getDaemonJob(jobId: string): Promise<DaemonJobView | null> {
+  const resp = await fetch(`${DAEMON_BASE}/jobs/${encodeURIComponent(jobId)}`);
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`GET /jobs/${jobId} ${resp.status}`);
+  return (await resp.json()) as DaemonJobView;
+}
+
 export function openEventsWs(jobId: string, onMessage: (m: any) => void): WebSocket {
   const ws = new WebSocket(`${DAEMON_WS}/events/${encodeURIComponent(jobId)}`);
   ws.onmessage = (ev) => {

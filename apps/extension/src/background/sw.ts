@@ -3,7 +3,7 @@
 // - Persists all state in chrome.storage.session so the popup is always re-renderable from disk
 //   and we survive MV3 service-worker eviction.
 
-import { postClip, openEventsWs } from "../lib/api.js";
+import { postClip, openEventsWs, getDaemonJob } from "../lib/api.js";
 import {
   type JobView,
   type PendingSelection,
@@ -21,6 +21,28 @@ import {
 // for it until the user manually reopens the popup (we then attempt re-attach via GET /jobs).
 const activeWs = new Map<string, WebSocket>();
 
+// Per-job event queue. WS events arrive faster than chrome.storage round-trips, and patchJob is
+// read-modify-write. Without serialization, "done" could be clobbered by a stale "stage_done"
+// patch that read the storage before "done" wrote it. This map chains all events for one job
+// onto a single Promise so they apply in arrival order.
+const applyQueues = new Map<string, Promise<void>>();
+
+function enqueueApply(jobId: string, ev: any): Promise<void> {
+  const prev = applyQueues.get(jobId) ?? Promise.resolve();
+  const next = prev
+    .catch(() => undefined)
+    .then(() => applyEventToJob(jobId, ev))
+    .catch((err) => {
+      console.error("[ytc-sw] applyEventToJob failed:", err);
+    });
+  applyQueues.set(jobId, next);
+  // Best-effort cleanup once this queue drains.
+  void next.finally(() => {
+    if (applyQueues.get(jobId) === next) applyQueues.delete(jobId);
+  });
+  return next;
+}
+
 function nowMs(): number {
   return Date.now();
 }
@@ -35,17 +57,20 @@ async function maybeOpenPopup() {
 
 async function attachWs(job: JobView): Promise<void> {
   if (activeWs.has(job.job_id)) return;
-  const ws = openEventsWs(job.job_id, async (ev: any) => {
+  const ws = openEventsWs(job.job_id, (ev: any) => {
     if (!ev || typeof ev !== "object") return;
-    await applyEventToJob(job.job_id, ev);
-    if (ev.type === "done" || ev.type === "failed") {
-      try {
-        activeWs.get(job.job_id)?.close();
-      } catch {
-        /* ignore */
+    // Enqueue rather than await — preserves arrival order and avoids races between
+    // closely-spaced stage_done + done events.
+    void enqueueApply(job.job_id, ev).then(() => {
+      if (ev.type === "done" || ev.type === "failed") {
+        try {
+          activeWs.get(job.job_id)?.close();
+        } catch {
+          /* ignore */
+        }
+        activeWs.delete(job.job_id);
       }
-      activeWs.delete(job.job_id);
-    }
+    });
   });
   ws.onclose = () => {
     activeWs.delete(job.job_id);
@@ -162,10 +187,50 @@ async function handleDismissJob(jobId: string): Promise<void> {
 }
 
 async function handleRehydrate(): Promise<void> {
-  // Re-attach WSs for any jobs that are still in flight per storage.
+  // Two-phase rehydration:
+  //   1. For any job our storage thinks is still in flight, ask the daemon for the truth
+  //      via GET /jobs/{id}. If the daemon has moved on (done/failed), update storage.
+  //   2. For any job still genuinely in flight, re-attach a WS so future events update the UI.
   const jobs = await getJobs();
   for (const job of jobs) {
-    if ((job.state === "queued" || job.state === "running") && !activeWs.has(job.job_id)) {
+    if (job.state !== "queued" && job.state !== "running") continue;
+    try {
+      const truth = await getDaemonJob(job.job_id);
+      if (truth) {
+        if (truth.state === "done") {
+          await patchJob(job.job_id, {
+            state: "done",
+            current_stage: null,
+            stages_done: truth.stages_done ?? job.stages_done,
+            durations_ms: truth.durations_ms ?? job.durations_ms,
+            note_path: truth.paths?.note ?? null,
+            last_log: "done",
+          });
+          continue;
+        }
+        if (truth.state === "failed") {
+          await patchJob(job.job_id, {
+            state: "failed",
+            error_stage: truth.failed_at_stage ?? job.current_stage,
+            error_message: truth.error_message ?? truth.error_class ?? "unknown error",
+            stages_done: truth.stages_done ?? job.stages_done,
+            durations_ms: truth.durations_ms ?? job.durations_ms,
+            last_log: `failed: ${truth.error_message ?? truth.error_class ?? "unknown"}`,
+          });
+          continue;
+        }
+        // Still queued/running on daemon — sync intermediate fields, then re-attach.
+        await patchJob(job.job_id, {
+          state: truth.state === "queued" ? "queued" : "running",
+          current_stage: truth.current_stage,
+          stages_done: truth.stages_done ?? job.stages_done,
+          durations_ms: truth.durations_ms ?? job.durations_ms,
+        });
+      }
+    } catch (err) {
+      console.warn("[ytc-sw] daemon reconcile failed for", job.job_id, err);
+    }
+    if (!activeWs.has(job.job_id)) {
       await attachWs(job);
     }
   }
