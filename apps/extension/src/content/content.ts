@@ -117,13 +117,34 @@ function updateTooltip(clientX: number, clientY: number) {
 }
 
 function onMouseDown(ev: MouseEvent) {
-  // Alt+drag — YouTube reserves Ctrl for its own seekbar shortcuts (frame-step / chapter jump).
+  // Alt+drag — YouTube reserves Ctrl for its own seekbar shortcuts.
   if (!ev.altKey) return;
-  const bar = getProgressBarEl();
+  if (ev.button !== 0) return; // left-click only
+
+  // Use event target instead of coordinate bounds: the user must press on (or inside) the seekbar.
+  // closest() also matches descendants like .ytp-scrubber-button, .ytp-progress-list, etc.
+  const target = ev.target as HTMLElement | null;
+  let bar = target?.closest(".ytp-progress-bar") as HTMLElement | null;
+  if (!bar) {
+    // Fall back to the global lookup so a near-miss still works (helps when the user clicks the
+    // padding around the bar).
+    bar = getProgressBarEl();
+    if (!bar) {
+      console.log("[ytc] alt+mousedown but no .ytp-progress-bar found");
+      return;
+    }
+    // Sanity: only proceed if the cursor Y is within the bar's vertical band.
+    const r = bar.getBoundingClientRect();
+    if (ev.clientY < r.top - 6 || ev.clientY > r.bottom + 6) {
+      console.log("[ytc] alt+mousedown outside seekbar band, ignoring");
+      return;
+    }
+  }
   const video = getVideoEl();
-  if (!bar || !video || !isFinite(video.duration)) return;
-  const barRect = bar.getBoundingClientRect();
-  if (ev.clientY < barRect.top - 12 || ev.clientY > barRect.bottom + 12) return;
+  if (!video || !isFinite(video.duration)) {
+    console.log("[ytc] alt+mousedown but no video element / duration not ready");
+    return;
+  }
   ev.preventDefault();
   ev.stopImmediatePropagation();
   dragging = true;
@@ -134,6 +155,7 @@ function onMouseDown(ev: MouseEvent) {
   ov.style.width = `0%`;
   ensureTooltip();
   updateTooltip(ev.clientX, ev.clientY);
+  console.log("[ytc] drag start at", startS);
 }
 
 function onMouseMove(ev: MouseEvent) {
@@ -197,6 +219,7 @@ function start() {
   document.addEventListener("mouseup", onMouseUp, true);
   document.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("blur", onBlur, true);
+  console.log("[ytc] content script loaded — Alt+drag on the seekbar to mark a range");
 }
 
 start();
