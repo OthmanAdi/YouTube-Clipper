@@ -187,15 +187,45 @@ function onMouseUp(_ev: MouseEvent) {
     toast("Not a YouTube watch page.");
     return;
   }
-  chrome.runtime.sendMessage({
-    type: "clip.range_selected",
-    url: ctx.url,
-    start_s: s,
-    end_s: e,
-    video_title: ctx.videoTitle,
-    channel_name: ctx.channelName,
-  });
-  toast(`Range captured: ${mmss(s)} → ${mmss(e)}. Open the extension popup to extract.`);
+  // Guard against the "extension context invalidated" state that happens when the user reloads
+  // the extension while this YouTube tab is still open. We can't send to the SW any more —
+  // tell the user how to recover instead of crashing.
+  try {
+    if (!chrome?.runtime?.id) {
+      toast(
+        "Extension was reloaded. Refresh this YouTube tab (F5) so the new version can take over."
+      );
+      return;
+    }
+    chrome.runtime.sendMessage(
+      {
+        type: "clip.range_selected",
+        url: ctx.url,
+        start_s: s,
+        end_s: e,
+        video_title: ctx.videoTitle,
+        channel_name: ctx.channelName,
+      },
+      () => {
+        // Read lastError to suppress "Unchecked runtime.lastError" noise.
+        const err = chrome.runtime.lastError;
+        if (err) {
+          console.warn("[ytc] sendMessage error:", err.message);
+          toast(
+            "Couldn't reach the extension. Refresh this YouTube tab (F5) and try again."
+          );
+        }
+      }
+    );
+    toast(
+      `Range captured: ${mmss(s)} → ${mmss(e)}. Open the extension popup to extract.`
+    );
+  } catch (err) {
+    console.warn("[ytc] sendMessage threw:", err);
+    toast(
+      "Extension was reloaded. Refresh this YouTube tab (F5) so the new version can take over."
+    );
+  }
 }
 
 function onKeyDown(ev: KeyboardEvent) {
