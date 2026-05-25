@@ -52,9 +52,24 @@ class OllamaSummarizerSettings(BaseModel):
     model: str = "qwen2.5:14b"
 
 
+class QwenSummarizerSettings(BaseModel):
+    """Alibaba Cloud MaaS Qwen — OpenAI-compatible mode endpoint.
+
+    Endpoint format: https://<workspace>.<region>.maas.aliyuncs.com/compatible-mode/v1
+    Auth: Authorization: Bearer <api_key>.
+    """
+    enabled: bool = True
+    endpoint: str
+    model: str = "qwen-plus"
+    api_key: str
+
+
 class SummarizerSettings(BaseModel):
     azure: AzureSummarizerSettings
     ollama: OllamaSummarizerSettings
+    # Optional — older configs may not have a [summarizer.qwen] section. _pick_adapter()
+    # raises a clear error if the user picks "qwen" while this is None.
+    qwen: QwenSummarizerSettings | None = None
 
 
 class RetrySettings(BaseModel):

@@ -7,6 +7,7 @@ import time
 
 from youtube_clipper.adapters.azure_foundry import AzureFoundryAdapter
 from youtube_clipper.adapters.ollama import OllamaAdapter
+from youtube_clipper.adapters.qwen import QwenAdapter
 from youtube_clipper.logging import bind_stage, get_logger
 from youtube_clipper.models import Job, Stage, SummaryArtifact
 
@@ -15,11 +16,19 @@ from .context import PipelineContext
 log = get_logger(__name__)
 
 
-def _pick_adapter(name: str, settings):
+def _pick_adapter(name: str, settings, model_override: str | None = None):
     if name == "azure":
-        return AzureFoundryAdapter(settings.summarizer.azure)
+        return AzureFoundryAdapter(settings.summarizer.azure, model_override=model_override)
     if name == "ollama":
-        return OllamaAdapter(settings.summarizer.ollama)
+        return OllamaAdapter(settings.summarizer.ollama, model_override=model_override)
+    if name == "qwen":
+        if settings.summarizer.qwen is None:
+            raise ValueError(
+                "qwen summarizer requested but [summarizer.qwen] is not configured. "
+                "Add the section to config/config.toml and set QWEN_ENDPOINT + QWEN_API_KEY "
+                "in config/.secrets.env."
+            )
+        return QwenAdapter(settings.summarizer.qwen, model_override=model_override)
     raise ValueError(f"unknown summarizer: {name}")
 
 
@@ -35,7 +44,8 @@ async def summarize(job: Job, ctx: PipelineContext) -> Job:
         seg["text"].strip() for seg in transcript_data["segments"]
     ).strip()
 
-    adapter = _pick_adapter(job.input.summarizer, ctx.settings)
+    model_override = getattr(job.input, "model", None)
+    adapter = _pick_adapter(job.input.summarizer, ctx.settings, model_override)
     max_attempts = ctx.settings.retry.summarize_max_attempts
 
     result = None

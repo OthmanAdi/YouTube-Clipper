@@ -1,11 +1,22 @@
-"""Ollama summarizer adapter — local chat model with JSON-mode output."""
+"""Qwen (Alibaba Cloud MaaS) summarizer adapter — OpenAI-compatible mode.
+
+Qwen exposes a "compatible-mode" endpoint that speaks the OpenAI v1 chat-completions
+protocol verbatim, so the wire format is nearly identical to Azure. Differences:
+
+  - Auth header is `Authorization: Bearer <key>` (Azure uses `api-key: <key>`).
+  - URL is `{endpoint}/chat/completions` — no /openai/deployments/{model} segment.
+  - Model goes in the request body (`"model": ...`) instead of in the URL.
+  - No api-version query param.
+
+JSON-mode is supported via `response_format={"type": "json_object"}` exactly like OpenAI.
+"""
 from __future__ import annotations
 
 import json
 
 import httpx
 
-from youtube_clipper.config import OllamaSummarizerSettings
+from youtube_clipper.config import QwenSummarizerSettings
 from youtube_clipper.logging import get_logger
 
 from .base import DetailLevel, SummaryResult, build_system_prompt, build_user_prompt
@@ -13,18 +24,18 @@ from .base import DetailLevel, SummaryResult, build_system_prompt, build_user_pr
 log = get_logger(__name__)
 
 
-class OllamaAdapter:
+class QwenAdapter:
     def __init__(
         self,
-        cfg: OllamaSummarizerSettings,
+        cfg: QwenSummarizerSettings,
         *,
         model_override: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.cfg = cfg
-        # Per-job model override beats config default — lets the popup pick a different local model.
+        # Per-job model override beats config default — lets the popup pick turbo/plus/max per clip.
         self.model = model_override or cfg.model
-        self.name = f"ollama/{self.model}"
+        self.name = f"qwen/{self.model}"
         self._client = client
 
     async def summarize(
@@ -34,19 +45,22 @@ class OllamaAdapter:
         language: str,
         detail: DetailLevel = "standard",
     ) -> SummaryResult:
-        url = f"{self.cfg.endpoint.rstrip('/')}/api/chat"
+        url = f"{self.cfg.endpoint.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.cfg.api_key}",
+            "Content-Type": "application/json",
+        }
         body = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": build_system_prompt(detail)},
                 {"role": "user", "content": build_user_prompt(transcript, language)},
             ],
-            "format": "json",
-            "stream": False,
-            "options": {"temperature": 0.2},
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
         }
 
-        client = self._client or httpx.AsyncClient(timeout=300)
+        client = self._client or httpx.AsyncClient(timeout=120)
         owns = self._client is None
         try:
             log.info(
@@ -54,10 +68,10 @@ class OllamaAdapter:
                 backend=self.name,
                 transcript_chars=len(transcript),
             )
-            resp = await client.post(url, json=body)
+            resp = await client.post(url, headers=headers, json=body)
             resp.raise_for_status()
             data = resp.json()
-            content = data["message"]["content"]
+            content = data["choices"][0]["message"]["content"]
             parsed = json.loads(content)
             return SummaryResult(
                 tldr=parsed["tldr"],

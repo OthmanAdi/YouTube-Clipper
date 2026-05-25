@@ -30,9 +30,11 @@ language     = "auto"
 
 [summarizer.azure]
 # Disabled by default — flip to true after you fill in config/.secrets.env.
+# Default model is the per-job fallback when the popup does not send an explicit model override.
+# Popup pre-bakes: gpt-5-mini (cheap), gpt-5.4 (balanced), gpt-5.5 (best).
 enabled  = true
 endpoint = "${AZURE_FOUNDRY_ENDPOINT}"
-model    = "gpt-4o-mini"
+model    = "gpt-5-mini"
 api_key  = "${AZURE_FOUNDRY_KEY}"
 
 [summarizer.ollama]
@@ -43,6 +45,17 @@ endpoint = "http://127.0.0.1:11434"
 # Any model you've `ollama pull`-ed. Some good choices:
 #   hermes3:8b, qwen2.5:14b, llama3.1:8b, mistral-nemo, deepseek-r1:8b
 model    = "hermes3:8b"
+
+[summarizer.qwen]
+# Alibaba Cloud MaaS Qwen — OpenAI-compatible mode endpoint.
+# Endpoint format: https://<workspace>.<region>.maas.aliyuncs.com/compatible-mode/v1
+# Auth: Authorization: Bearer <api_key>.
+# Default model is the per-job fallback. Popup pre-bakes: qwen-turbo (cheap),
+# qwen-plus (balanced), qwen3.7-max (best).
+enabled  = true
+endpoint = "${QWEN_ENDPOINT}"
+model    = "qwen-plus"
+api_key  = "${QWEN_API_KEY}"
 
 [retry]
 download_max_attempts  = 4

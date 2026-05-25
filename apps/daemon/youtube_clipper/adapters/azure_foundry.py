@@ -19,10 +19,14 @@ class AzureFoundryAdapter:
     def __init__(
         self,
         cfg: AzureSummarizerSettings,
+        *,
+        model_override: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.cfg = cfg
-        self.name = f"azure-foundry/{cfg.model}"
+        # Per-job model override beats config default — lets the popup pick gpt-5-mini/5.4/5.5 per clip.
+        self.model = model_override or cfg.model
+        self.name = f"azure-foundry/{self.model}"
         self._client = client
 
     async def summarize(
@@ -34,7 +38,7 @@ class AzureFoundryAdapter:
     ) -> SummaryResult:
         url = (
             f"{self.cfg.endpoint.rstrip('/')}"
-            f"/openai/deployments/{self.cfg.model}"
+            f"/openai/deployments/{self.model}"
             f"/chat/completions?api-version={API_VERSION}"
         )
         headers = {"api-key": self.cfg.api_key, "Content-Type": "application/json"}

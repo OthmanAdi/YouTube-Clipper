@@ -39,13 +39,17 @@ class ClipInput(BaseModel):
     url: str
     start_s: float
     end_s: float
-    summarizer: str = Field(pattern=r"^(azure|ollama)$")
+    summarizer: str = Field(pattern=r"^(azure|ollama|qwen)$")
     video_title: str | None = None
     channel_name: str | None = None
     # Optional per-clip output dir override. None = use config.paths.output_dir (default).
     output_dir: Path | None = None
     # Summary intensity. "standard" = default; "quick" = terse; "deep" = thorough.
     detail: str = Field(default="standard", pattern=r"^(quick|standard|deep)$")
+    # Optional per-clip model override (e.g. "gpt-5-mini", "qwen-turbo"). None = use config default
+    # for the chosen summarizer. Lets the popup pick cheap/balanced/best per clip without changing
+    # the global config.
+    model: str | None = None
 
 
 class ClipPaths(BaseModel):

@@ -16,13 +16,16 @@ class ClipRequest(BaseModel):
     url: str
     start_s: float
     end_s: float
-    summarizer: str = Field(pattern=r"^(azure|ollama)$")
+    summarizer: str = Field(pattern=r"^(azure|ollama|qwen)$")
     video_title: str | None = None
     channel_name: str | None = None
     # Optional override of the output directory. Must be an absolute path.
     output_dir: str | None = None
     # Summary intensity. quick = terse, deep = thorough.
     detail: str = Field(default="standard", pattern=r"^(quick|standard|deep)$")
+    # Optional per-clip model override (e.g. "gpt-5-mini", "qwen-turbo"). None = use config default
+    # for the chosen summarizer.
+    model: str | None = None
 
 
 @router.post("/clip")
@@ -50,6 +53,7 @@ async def create_clip(req: ClipRequest, request: Request):
         channel_name=req.channel_name,
         output_dir=output_dir,
         detail=req.detail,
+        model=req.model,
     )
     job = build_new_job(input, settings)
     await request.app.state.runner.enqueue(job)
