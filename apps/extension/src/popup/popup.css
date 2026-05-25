@@ -126,6 +126,63 @@ details#advanced-details .row input {
   color: #ff5b9c;
   font-size: 12.5px;
 }
+
+/* ---------- multi-segment list ---------- */
+#pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 10px;
+}
+.segment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #181012;
+  border: 1px solid #2a2a2a;
+  border-radius: 5px;
+}
+.segment-row .seg-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35) inset;
+}
+.segment-row .seg-meta {
+  flex: 1;
+  min-width: 0;
+}
+.segment-row .seg-title {
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
+.segment-row .seg-range {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
+  font-size: 11px;
+  color: #ff5b9c;
+  margin-top: 1px;
+}
+.segment-row .seg-actions {
+  display: flex;
+  gap: 4px;
+}
+.segment-row .seg-actions button {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+/* Color dots — keep in sync with content.css palette + lib/state.ts SEGMENT_COLORS. */
+.seg-dot.seg-rose   { background: #ff1864; }
+.seg-dot.seg-cyan   { background: #00c8ff; }
+.seg-dot.seg-amber  { background: #ffae3a; }
+.seg-dot.seg-green  { background: #44d17a; }
+.seg-dot.seg-violet { background: #b86fff; }
+.seg-dot.seg-orange { background: #ff8c00; }
 .row {
   display: flex;
   align-items: center;

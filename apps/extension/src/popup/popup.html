@@ -13,19 +13,31 @@
       </header>
 
       <section id="empty-state" hidden>
-        <p>Hold <kbd>Alt</kbd> and drag across the YouTube seekbar to mark a range.</p>
-        <p class="hint">Pink overlay shows as you drag. Release to lock the range, then click the toolbar icon.</p>
+        <p>Hold <kbd>Alt</kbd> and drag across the YouTube seekbar to mark a segment.</p>
+        <p class="hint">Drag again for a second segment (different color). Up to <strong>6</strong> per video. Release to lock; open this popup to extract.</p>
       </section>
 
       <section id="pending-card" class="card pending" hidden>
-        <div class="card-title" id="p-title">Title</div>
-        <div class="card-channel" id="p-channel"></div>
-        <div class="card-range" id="p-range">0:00 → 0:00 (0s)</div>
+        <div class="section-head">
+          <h2 class="section-title">Pending segments <span class="count" id="pending-count"></span></h2>
+          <button id="dismiss-pending-btn" class="ghost" title="Remove all pending segments">Clear all</button>
+        </div>
+        <div id="pending-list"></div>
+
         <div class="row">
           <label for="summarizer-select">Summarizer</label>
-          <select id="summarizer-select">
-            <option value="ollama">Ollama (local)</option>
-            <option value="azure">Azure Foundry</option>
+          <select id="summarizer-select" title="Provider + model. Cloud calls cost money — Ollama runs locally for free.">
+            <option value="ollama">Ollama (local · configured model)</option>
+            <optgroup label="Azure Foundry">
+              <option value="azure:gpt-5-mini">Azure · gpt-5-mini  ✦ Cheap</option>
+              <option value="azure:gpt-5.4">Azure · gpt-5.4  ✦ Balanced</option>
+              <option value="azure:gpt-5.5">Azure · gpt-5.5  ✦ Best</option>
+            </optgroup>
+            <optgroup label="Qwen (Alibaba Cloud)">
+              <option value="qwen:qwen-turbo">Qwen · qwen-turbo  ✦ Cheapest</option>
+              <option value="qwen:qwen-plus">Qwen · qwen-plus  ✦ Balanced</option>
+              <option value="qwen:qwen3.7-max">Qwen · qwen3.7-max  ✦ Best</option>
+            </optgroup>
           </select>
         </div>
         <div class="row">
@@ -45,10 +57,24 @@
           <p class="hint">Absolute path. Leave blank to use the default from config.toml. Saved for next time.</p>
         </details>
         <div class="actions">
-          <button id="extract-btn" class="primary">Extract</button>
-          <button id="dismiss-pending-btn">Dismiss</button>
+          <button id="extract-all-btn" class="primary">Extract all</button>
         </div>
+        <p class="hint">Each segment becomes its own clip / note. Settings above apply to all extractions.</p>
       </section>
+
+      <template id="segment-row-tpl">
+        <div class="segment-row">
+          <span class="seg-dot"></span>
+          <div class="seg-meta">
+            <div class="seg-title"></div>
+            <div class="seg-range"></div>
+          </div>
+          <div class="seg-actions">
+            <button class="seg-extract" title="Extract just this segment">Extract</button>
+            <button class="seg-remove ghost" title="Remove this segment">✕</button>
+          </div>
+        </div>
+      </template>
 
       <section id="jobs-section" hidden>
         <div class="section-head">

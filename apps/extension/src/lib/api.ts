@@ -1,15 +1,19 @@
 export const DAEMON_BASE = "http://127.0.0.1:7777";
 export const DAEMON_WS = "ws://127.0.0.1:7777";
 
+export type Provider = "azure" | "ollama" | "qwen";
+
 export interface ClipRequest {
   url: string;
   start_s: number;
   end_s: number;
-  summarizer: "azure" | "ollama";
+  summarizer: Provider;
   video_title?: string | null;
   channel_name?: string | null;
   output_dir?: string | null;
   detail?: "quick" | "standard" | "deep";
+  // Per-clip model override. None/omit = use config default for the chosen summarizer.
+  model?: string | null;
 }
 
 export interface ClipResponse {

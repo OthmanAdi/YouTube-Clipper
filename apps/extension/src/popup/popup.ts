@@ -5,9 +5,10 @@ import { getHealth } from "../lib/api.js";
 import { mmss, lengthLabel } from "../lib/format.js";
 import {
   type JobView,
-  type PendingSelection,
+  type SegmentSelection,
   type UiPrefs,
-  getPending,
+  SEGMENT_COLORS,
+  getSegments,
   getJobs,
   getPrefs,
   setPrefs,
@@ -117,7 +118,8 @@ function buildJobRow(job: JobView): HTMLElement {
         : job.current_stage
           ? `${job.current_stage} (${stageIndex(job.current_stage) + 1}/${STAGE_ORDER.length})`
           : "queued";
-  sub.textContent = `${range} · ${stageLabel} · ${job.summarizer} · ${job.detail || "standard"}`;
+  const provLabel = job.model ? `${job.summarizer}:${job.model}` : job.summarizer;
+  sub.textContent = `${range} · ${stageLabel} · ${provLabel} · ${job.detail || "standard"}`;
 
   const bar = node.querySelector(".job-bar") as HTMLElement;
   bar.style.width = `${progressPercent(job)}%`;
@@ -224,21 +226,61 @@ function buildJobRow(job: JobView): HTMLElement {
   return node;
 }
 
-function renderPending(pending: PendingSelection | null, prefs: UiPrefs) {
-  if (!pending) {
+// Build one segment row from the template. Bound on click handlers go through the SW.
+function buildSegmentRow(seg: SegmentSelection): HTMLElement {
+  const tpl = document.getElementById("segment-row-tpl") as HTMLTemplateElement;
+  const node = tpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
+  node.dataset.segmentId = seg.segment_id;
+
+  const colorName = SEGMENT_COLORS[seg.color_idx % SEGMENT_COLORS.length];
+  const dot = node.querySelector(".seg-dot") as HTMLElement;
+  dot.classList.add(`seg-${colorName}`);
+  dot.title = colorName;
+
+  const title = node.querySelector(".seg-title")!;
+  title.textContent = seg.video_title || "(untitled)";
+
+  const range = node.querySelector(".seg-range")!;
+  range.textContent = `${mmss(seg.start_s)} → ${mmss(seg.end_s)} · ${lengthLabel(seg.end_s - seg.start_s)}`;
+
+  const extractBtn = node.querySelector(".seg-extract") as HTMLButtonElement;
+  extractBtn.onclick = () => void extractSegments(seg.segment_id, extractBtn);
+
+  const removeBtn = node.querySelector(".seg-remove") as HTMLButtonElement;
+  removeBtn.onclick = async () => {
+    await chrome.runtime.sendMessage({
+      type: "popup.remove_segment",
+      segment_id: seg.segment_id,
+    });
+  };
+
+  return node;
+}
+
+function renderPending(segments: SegmentSelection[], prefs: UiPrefs) {
+  if (segments.length === 0) {
     show("pending-card", false);
     return;
   }
   show("pending-card", true);
-  setText("p-title", pending.video_title || "(untitled)");
-  setText("p-channel", pending.channel_name || "");
-  setText(
-    "p-range",
-    `${mmss(pending.start_s)} → ${mmss(pending.end_s)}  (${lengthLabel(pending.end_s - pending.start_s)})`
-  );
-  // Restore last-used summarizer + detail + output dir.
+  setText("pending-count", `(${segments.length})`);
+
+  const list = q("pending-list");
+  list.innerHTML = "";
+  for (const seg of segments) {
+    list.appendChild(buildSegmentRow(seg));
+  }
+
+  // Restore last-used summarizer:model + detail + output dir.
   const sel = q<HTMLSelectElement>("summarizer-select");
-  if (sel) sel.value = prefs.default_summarizer;
+  if (sel) {
+    // Guard against a saved value that no longer exists in the dropdown (e.g. after we
+    // change the pre-baked options). Fall back to "ollama".
+    const opts = Array.from(sel.options).map((o) => o.value);
+    sel.value = opts.includes(prefs.default_summarizer_model)
+      ? prefs.default_summarizer_model
+      : "ollama";
+  }
   const detSel = q<HTMLSelectElement>("detail-select");
   if (detSel) detSel.value = prefs.default_detail;
   const od = q<HTMLInputElement>("output-dir-input");
@@ -262,16 +304,16 @@ function renderJobs(jobs: JobView[]) {
   }
 }
 
-function renderEmptyState(pending: PendingSelection | null, jobs: JobView[]) {
-  const empty = !pending && jobs.length === 0;
+function renderEmptyState(segments: SegmentSelection[], jobs: JobView[]) {
+  const empty = segments.length === 0 && jobs.length === 0;
   show("empty-state", empty);
 }
 
 async function render() {
-  const [pending, jobs, prefs] = await Promise.all([getPending(), getJobs(), getPrefs()]);
-  renderPending(pending, prefs);
+  const [segments, jobs, prefs] = await Promise.all([getSegments(), getJobs(), getPrefs()]);
+  renderPending(segments, prefs);
   renderJobs(jobs);
-  renderEmptyState(pending, jobs);
+  renderEmptyState(segments, jobs);
 }
 
 async function wireHealthChip() {
@@ -288,21 +330,33 @@ async function wireHealthChip() {
   }
 }
 
-async function onExtractClicked() {
-  const summarizer = (q<HTMLSelectElement>("summarizer-select")).value as "azure" | "ollama";
+// Extract one segment (by id) or all pending (id = null). Disables the button while in flight
+// so the user can't double-fire. Settings are read from the shared header on each call.
+async function extractSegments(segmentId: string | null, btn?: HTMLButtonElement) {
+  const summarizerModel = q<HTMLSelectElement>("summarizer-select").value;
   const detail = (q<HTMLSelectElement>("detail-select")).value as "quick" | "standard" | "deep";
   const outputDir = (q<HTMLInputElement>("output-dir-input")).value.trim();
   await setPrefs({
-    default_summarizer: summarizer,
+    default_summarizer_model: summarizerModel,
     default_detail: detail,
     output_dir_override: outputDir || null,
   });
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.prevText = btn.textContent || "";
+    btn.textContent = segmentId ? "Extracting…" : "Extracting all…";
+  }
   const r = await chrome.runtime.sendMessage({
     type: "popup.extract",
-    summarizer,
+    summarizer: summarizerModel,
+    segment_id: segmentId,
     output_dir: outputDir || null,
     detail,
   });
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = btn.dataset.prevText || "Extract";
+  }
   if (!r?.ok) {
     alert(`Extract failed: ${r?.error || "unknown"}`);
   }
@@ -326,7 +380,10 @@ async function init() {
   }
   await render();
 
-  q("extract-btn")?.addEventListener("click", () => void onExtractClicked());
+  q("extract-all-btn")?.addEventListener("click", (ev) => {
+    const btn = ev.currentTarget as HTMLButtonElement;
+    void extractSegments(null, btn);
+  });
   q("dismiss-pending-btn")?.addEventListener("click", () => void onDismissPending());
   q("clear-done-btn")?.addEventListener("click", () => void onClearDone());
 

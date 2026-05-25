@@ -3,18 +3,38 @@
 // - Persists all state in chrome.storage.session so the popup is always re-renderable from disk
 //   and we survive MV3 service-worker eviction.
 
-import { postClip, openEventsWs, getDaemonJob, makeWebsite } from "../lib/api.js";
+import { postClip, openEventsWs, getDaemonJob, makeWebsite, type Provider } from "../lib/api.js";
 import {
   type JobView,
-  type PendingSelection,
-  getPending,
-  setPending,
+  type SegmentSelection,
+  MAX_SEGMENTS,
+  addSegment,
+  removeSegment,
+  clearSegments,
+  getSegments,
   upsertJob,
   patchJob,
   getJob,
   removeJob,
   getJobs,
 } from "../lib/state.js";
+
+// Parse the popup's combined "provider:model" select value into separate fields.
+// Examples:
+//   "ollama"           → { provider: "ollama", model: null }
+//   "azure:gpt-5-mini" → { provider: "azure",  model: "gpt-5-mini" }
+//   "qwen:qwen3.7-max" → { provider: "qwen",   model: "qwen3.7-max" }
+// Model names containing colons or dots are preserved via split-limit-2 (qwen3.7-max).
+function parseSummarizerModel(value: string): { provider: Provider; model: string | null } {
+  const idx = value.indexOf(":");
+  if (idx === -1) {
+    // No colon: bare provider, no model override.
+    return { provider: value as Provider, model: null };
+  }
+  const provider = value.slice(0, idx) as Provider;
+  const model = value.slice(idx + 1);
+  return { provider, model: model.length > 0 ? model : null };
+}
 
 // Active WS connections, keyed by job_id. Held in SW memory only — if SW dies we lose them and
 // the job will keep running on the daemon side; the popup will just stop receiving live updates
@@ -118,48 +138,66 @@ async function applyEventToJob(jobId: string, ev: any): Promise<void> {
   await patchJob(jobId, patch);
 }
 
-async function handleRangeSelected(msg: PendingSelection) {
-  const p: PendingSelection = {
+// Content script fires this for each Alt+drag release. We append to the segments array.
+// If the user is already at MAX_SEGMENTS, we report the rejection back so the content script
+// can show a toast — that lets the seekbar feedback be authoritative without each side
+// counting independently.
+async function handleSegmentAdded(
+  msg: {
+    url: string;
+    start_s: number;
+    end_s: number;
+    video_title: string | null;
+    channel_name: string | null;
+  }
+): Promise<{ ok: boolean; full?: boolean; segment_id?: string; color_idx?: number; max?: number }> {
+  const added = await addSegment({
     url: msg.url,
     start_s: msg.start_s,
     end_s: msg.end_s,
     video_title: msg.video_title ?? null,
     channel_name: msg.channel_name ?? null,
     captured_at: nowMs(),
-  };
-  await setPending(p);
+  });
+  if (added === null) {
+    return { ok: false, full: true, max: MAX_SEGMENTS };
+  }
   await maybeOpenPopup();
+  return { ok: true, segment_id: added.segment_id, color_idx: added.color_idx };
 }
 
-async function handleExtract(
-  summarizer: "azure" | "ollama",
+// Extract one segment: POST /clip, create a JobView, attach WS, then remove that segment
+// from the pendingSegments array so the popup row disappears once a job exists for it.
+async function extractOne(
+  seg: SegmentSelection,
+  summarizerModel: string,
   outputDirOverride: string | null,
   detail: "quick" | "standard" | "deep"
-): Promise<{ ok: boolean; job_id?: string; error?: string }> {
-  const pending = await getPending();
-  if (!pending) return { ok: false, error: "no pending selection" };
-
+): Promise<{ ok: true; job_id: string } | { ok: false; error: string }> {
+  const { provider, model } = parseSummarizerModel(summarizerModel);
   try {
     const resp = await postClip({
-      url: pending.url,
-      start_s: pending.start_s,
-      end_s: pending.end_s,
-      summarizer,
-      video_title: pending.video_title,
-      channel_name: pending.channel_name,
+      url: seg.url,
+      start_s: seg.start_s,
+      end_s: seg.end_s,
+      summarizer: provider,
+      model,
+      video_title: seg.video_title,
+      channel_name: seg.channel_name,
       output_dir: outputDirOverride || null,
       detail,
     });
     const job: JobView = {
       job_id: resp.job_id,
       clip_id: resp.clip_id,
-      url: pending.url,
-      start_s: pending.start_s,
-      end_s: pending.end_s,
-      summarizer,
+      url: seg.url,
+      start_s: seg.start_s,
+      end_s: seg.end_s,
+      summarizer: provider,
+      model,
       detail,
-      video_title: pending.video_title,
-      channel_name: pending.channel_name,
+      video_title: seg.video_title,
+      channel_name: seg.channel_name,
       output_dir_override: outputDirOverride,
       created_at: nowMs(),
       state: "queued",
@@ -173,12 +211,48 @@ async function handleExtract(
       durations_ms: {},
     };
     await upsertJob(job);
-    await setPending(null);
+    await removeSegment(seg.segment_id);
     await attachWs(job);
     return { ok: true, job_id: resp.job_id };
   } catch (e: any) {
     return { ok: false, error: String(e?.message ?? e) };
   }
+}
+
+// Extract a single segment (when segmentId is given) or all pending segments (when null).
+// For "all", we submit them sequentially so any failure aborts mid-stream and the popup can
+// surface a partial result — better than fire-and-forget where one bad clip would silently fail.
+async function handleExtract(
+  segmentId: string | null,
+  summarizerModel: string,
+  outputDirOverride: string | null,
+  detail: "quick" | "standard" | "deep"
+): Promise<{ ok: boolean; job_ids?: string[]; error?: string }> {
+  const segments = await getSegments();
+  if (segments.length === 0) {
+    return { ok: false, error: "no pending segments" };
+  }
+  const targets = segmentId
+    ? segments.filter((s) => s.segment_id === segmentId)
+    : segments;
+  if (targets.length === 0) {
+    return { ok: false, error: `segment ${segmentId} not found` };
+  }
+
+  const jobIds: string[] = [];
+  for (const seg of targets) {
+    const r = await extractOne(seg, summarizerModel, outputDirOverride, detail);
+    if (!r.ok) {
+      // Partial success: return what we managed to enqueue plus the error.
+      return {
+        ok: false,
+        job_ids: jobIds,
+        error: `${jobIds.length}/${targets.length} extracted; failed on next: ${r.error}`,
+      };
+    }
+    jobIds.push(r.job_id);
+  }
+  return { ok: true, job_ids: jobIds };
 }
 
 async function handleMakeWebsite(jobId: string): Promise<{ ok: boolean; path?: string; error?: string }> {
@@ -207,7 +281,12 @@ async function handleClearDone(): Promise<void> {
 }
 
 async function handleDismissPending(): Promise<void> {
-  await setPending(null);
+  // Clears the entire pending-segments array (legacy "Dismiss" / "Clear all").
+  await clearSegments();
+}
+
+async function handleRemoveSegment(segmentId: string): Promise<void> {
+  await removeSegment(segmentId);
 }
 
 async function handleDismissJob(jobId: string): Promise<void> {
@@ -273,21 +352,44 @@ async function handleRehydrate(): Promise<void> {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     try {
+      // New multi-segment message: content script sends one of these per Alt+drag release.
+      if (msg?.type === "clip.segment_added") {
+        const r = await handleSegmentAdded(msg);
+        sendResponse(r);
+        return;
+      }
+      // Legacy single-range message — kept for old content-script bundles in users' browsers
+      // while the new build propagates. Aliased onto segment_added.
       if (msg?.type === "clip.range_selected") {
-        await handleRangeSelected(msg);
-        sendResponse({ ok: true });
+        const r = await handleSegmentAdded(msg);
+        sendResponse(r);
         return;
       }
       if (msg?.type === "popup.extract") {
-        const summarizer = msg.summarizer === "ollama" ? "ollama" : "azure";
+        // msg.summarizer is the combined "provider:model" value from the popup select
+        // (e.g. "ollama", "azure:gpt-5-mini", "qwen:qwen3.7-max"). handleExtract splits it.
+        // msg.segment_id is the segment to extract; null/undefined = extract all pending.
+        const summarizerModel =
+          typeof msg.summarizer === "string" && msg.summarizer.length > 0
+            ? msg.summarizer
+            : "ollama";
+        const segmentId =
+          typeof msg.segment_id === "string" && msg.segment_id.length > 0
+            ? msg.segment_id
+            : null;
         const outputDirOverride =
           typeof msg.output_dir === "string" && msg.output_dir.trim().length > 0
             ? msg.output_dir.trim()
             : null;
         const detail =
           msg.detail === "quick" || msg.detail === "deep" ? msg.detail : "standard";
-        const r = await handleExtract(summarizer, outputDirOverride, detail);
+        const r = await handleExtract(segmentId, summarizerModel, outputDirOverride, detail);
         sendResponse(r);
+        return;
+      }
+      if (msg?.type === "popup.remove_segment") {
+        await handleRemoveSegment(String(msg.segment_id));
+        sendResponse({ ok: true });
         return;
       }
       if (msg?.type === "popup.make_website") {
@@ -322,6 +424,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   })();
   return true; // keep channel open for async sendResponse
 });
+
+// chrome.storage.session is TRUSTED_CONTEXTS-only by default — content scripts can't read or
+// listen for changes on it. Multi-segment overlays need that access (the content script
+// re-renders from pendingSegments on every storage change). Setting the access level here,
+// from the SW (a trusted context), opens it to content scripts too. Idempotent + cheap; safe
+// to call on every SW boot.
+try {
+  void chrome.storage.session.setAccessLevel({
+    accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS",
+  });
+} catch (err) {
+  console.warn("[ytc-sw] setAccessLevel(session) failed:", err);
+}
 
 // On SW start or after eviction, try to re-attach WSs for any unfinished jobs.
 void handleRehydrate();
