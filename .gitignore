@@ -50,3 +50,11 @@ GEMINI.md
 NOTES.md
 TODO.md
 .notes/
+
+# Mirrored agent memory (copied from ~/.claude/.../memory/)
+.memory/
+
+# Planning-with-files working notes (internal, not part of the product)
+task_plan.md
+findings.md
+progress.md
