@@ -1,13 +1,59 @@
-#ytc-overlay {
+/* Multi-segment overlays on the YouTube seekbar.
+   Two flavors:
+     - #ytc-overlay-drag    : the live preview while the user is Alt+dragging
+     - .ytc-segment-overlay : a confirmed segment, persisted in chrome.storage.session
+   Both use the same 6-color palette via .ytc-seg-<color> classes. */
+
+#ytc-overlay-drag,
+.ytc-segment-overlay {
   position: absolute;
   top: 0;
   height: 100%;
+  pointer-events: none;
+  z-index: 1000;
+  /* Default = rose. Specific .ytc-seg-* class overrides. */
   background: rgba(255, 24, 100, 0.55);
   border-left: 2px solid #ff1864;
   border-right: 2px solid #ff1864;
-  pointer-events: none;
-  z-index: 1000;
 }
+
+/* The live drag preview is slightly more saturated to stand out from confirmed overlays. */
+#ytc-overlay-drag {
+  outline: 1px dashed rgba(255, 255, 255, 0.45);
+}
+
+/* Color palette — keep keys in sync with lib/state.ts SEGMENT_COLORS. */
+.ytc-seg-rose {
+  background: rgba(255, 24, 100, 0.55);
+  border-left-color: #ff1864;
+  border-right-color: #ff1864;
+}
+.ytc-seg-cyan {
+  background: rgba(0, 200, 255, 0.55);
+  border-left-color: #00c8ff;
+  border-right-color: #00c8ff;
+}
+.ytc-seg-amber {
+  background: rgba(255, 174, 58, 0.60);
+  border-left-color: #ffae3a;
+  border-right-color: #ffae3a;
+}
+.ytc-seg-green {
+  background: rgba(68, 209, 122, 0.55);
+  border-left-color: #44d17a;
+  border-right-color: #44d17a;
+}
+.ytc-seg-violet {
+  background: rgba(184, 111, 255, 0.55);
+  border-left-color: #b86fff;
+  border-right-color: #b86fff;
+}
+.ytc-seg-orange {
+  background: rgba(255, 140, 0, 0.55);
+  border-left-color: #ff8c00;
+  border-right-color: #ff8c00;
+}
+
 #ytc-tooltip {
   position: fixed;
   background: rgba(0, 0, 0, 0.88);
