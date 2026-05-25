@@ -15,6 +15,9 @@ async def health(request: Request):
         "summarizers": {
             "azure": s.summarizer.azure.enabled,
             "ollama": s.summarizer.ollama.enabled,
+            # qwen is optional in config (Optional[QwenSummarizerSettings]). Surface false
+            # when unconfigured so the popup can disable Qwen options without guessing.
+            "qwen": bool(s.summarizer.qwen and s.summarizer.qwen.enabled),
         },
         "whisper_model": s.whisper.model,
     }
