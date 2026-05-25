@@ -39,9 +39,11 @@ recovery path (retries with explicit fallback chains).
    `(device, compute_type)` from config → `(cuda, int8)` → `(cpu, int8)`. Each tier is tried
    in order. Output: `transcript.json` (segments with word timestamps), `transcript.txt`
    (`[mm:ss] text` lines).
-5. `stage_05_summarize.py` — picks adapter (`azure` or `ollama` from `job.input.summarizer`),
-   calls `.summarize(transcript, language=..., detail=...)`. Retries on exception with
-   exponential backoff. Output: `summary.json`.
+5. `stage_05_summarize.py` — picks adapter (`azure`, `ollama`, or `qwen` from
+   `job.input.summarizer`), passes optional `model_override` from `job.input.model` so the
+   popup can pick a specific model per clip without changing global config, calls
+   `.summarize(transcript, language=..., detail=...)`. Retries on exception with exponential
+   backoff. Output: `summary.json`.
 6. `stage_06_write_note.py` — renders `note_template.md.j2` → `note.md`. Preserves `## My Notes`
    block from any existing file (sacrosanct user section). Atomic write via temp+rename.
 
@@ -60,16 +62,32 @@ and publishes a `failed` event over the per-job WS. On success, same but with `d
 - `deep` — 8-12 bullets (18-40 words), tldr 100-180 words, up to 5 quotes.
 
 All adapters MUST return strict JSON with keys exactly `tldr`, `bullets`, `notable_quotes`,
-`tags`. Both Azure and Ollama adapters use JSON-mode (Azure: `response_format=json_object`,
-Ollama: `format=json`).
+`tags`. All three current adapters use JSON-mode (Azure + Qwen:
+`response_format={"type": "json_object"}`, Ollama: `format=json`).
 
-To add a third backend (Groq, Together, OpenRouter, etc.):
+Three providers ship today:
 
-1. Create `adapters/<name>.py` with class `XxxAdapter` implementing the `Summarizer` protocol.
-2. Add `_pick_adapter()` branch in `pipeline/stage_05_summarize.py`.
-3. Add the new summarizer name to the `pattern` regex in `ClipInput.summarizer` and
+- `azure` (`azure_foundry.py`) — Azure OpenAI Service deployments. URL pattern:
+  `{endpoint}/openai/deployments/{model}/chat/completions?api-version=...`. Auth: `api-key` header.
+  Works for any OpenAI-family Azure deployment (gpt-4o, gpt-5-mini, gpt-5.4, gpt-5.5).
+- `ollama` (`ollama.py`) — Local Ollama server. URL: `{endpoint}/api/chat`. No auth.
+- `qwen` (`qwen.py`) — Alibaba Cloud MaaS in OpenAI-compatible mode. URL:
+  `{endpoint}/chat/completions`. Auth: `Authorization: Bearer <key>`. Model in body
+  (not URL like Azure).
+
+Every adapter constructor accepts `model_override: str | None`. When the popup picks
+"Azure · gpt-5.4" the daemon receives `summarizer="azure"`, `model="gpt-5.4"`, and the
+adapter uses that instead of `config.toml`'s default. None falls back to config.
+
+To add a fourth backend (Groq, Together, OpenRouter, etc.):
+
+1. Create `adapters/<name>.py` with class `XxxAdapter` implementing the `Summarizer`
+   protocol, accepting `model_override` kwarg.
+2. Add settings class to `config.py`, wire into `SummarizerSettings`.
+3. Add `_pick_adapter()` branch in `pipeline/stage_05_summarize.py`.
+4. Add the new summarizer name to the `pattern` regex in `ClipInput.summarizer` and
    `ClipRequest.summarizer`.
-4. Update the popup `<select id="summarizer-select">` options.
+5. Add `<option value="<name>:<model>">` entries to popup `<select id="summarizer-select">`.
 
 ## API endpoints (apps/daemon/youtube_clipper/api/)
 
@@ -90,20 +108,30 @@ Chrome Manifest V3. TypeScript, compiled by `tsc`. NO bundler — 7 npm devDepen
 (typescript + @types/chrome + @types/node + transitives). The build script (`scripts/build.mjs`)
 is 80 lines: `tsc`, copy manifest+html+css+icons+public-assets to `dist/`.
 
-- `content/content.ts` — listens for `Alt+mousedown` on `.ytp-progress-bar`, paints a pink
-  overlay during drag, sends `clip.range_selected` to the SW on release. SELF-CONTAINED — no
-  ES imports — because MV3 content scripts don't support module imports.
+- `content/content.ts` — listens for `Alt+mousedown` on `.ytp-progress-bar`, paints a
+  live colored overlay during drag, sends `clip.segment_added` to the SW on release.
+  Supports MULTIPLE concurrent segments (up to 6) — each gets a distinct color from a
+  6-color palette (rose, cyan, amber, green, violet, orange). Subscribes to
+  `chrome.storage.session.onChanged` and re-renders persistent overlays for every
+  pending segment whose URL matches the current video. SELF-CONTAINED — no ES imports —
+  because MV3 content scripts don't support module imports.
 - `background/sw.ts` — bridges popup ↔ daemon. Opens one WS per job. Persists all state in
   `chrome.storage.session` (survives SW eviction). Uses a per-job promise queue
   (`enqueueApply`) to serialize WS events — a critical fix for a race condition where
-  `stage_done` could clobber the `done` event.
+  `stage_done` could clobber the `done` event. Multi-segment: accumulates segments in
+  `pendingSegments[]`, lets the popup extract one (`segment_id`) or all (null id).
+  Also parses the combined `"provider:model"` selector value via `parseSummarizerModel()`.
 - `popup/popup.ts` — pure view, no state. Reads from `chrome.storage.session` via
-  `state.ts` helpers. Re-renders on `chrome.storage.onChanged`.
-- `lib/state.ts` — typed shape of `PendingSelection`, `JobView`, `UiPrefs`. Session storage
-  for active state, local storage for preferences (default summarizer, default detail,
-  output dir override).
-- `lib/api.ts` — `httpx`-equivalent: `postClip`, `getHealth`, `getDaemonJob`, `makeWebsite`,
-  `openEventsWs`.
+  `state.ts` helpers. Re-renders on `chrome.storage.onChanged`. The pending card is a
+  list of segments (color dot + range + Extract/Remove per row) with one shared
+  settings header (summarizer+model dropdown, detail, output dir) and an "Extract all"
+  button.
+- `lib/state.ts` — typed shape of `SegmentSelection` (segment_id + color_idx + range),
+  `JobView`, `UiPrefs`. Exports `SEGMENT_COLORS` (6-name palette) + `MAX_SEGMENTS = 6`.
+  Session storage for active state, local storage for preferences (combined
+  `default_summarizer_model` string, default detail, output dir override).
+- `lib/api.ts` — `httpx`-equivalent: `postClip` (now with optional `model` field),
+  `getHealth`, `getDaemonJob`, `makeWebsite`, `openEventsWs`. Exports `Provider` type.
 
 ## Config + secrets (config/)
 
